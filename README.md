@@ -21,8 +21,11 @@ polyglot inspect collection.png
 polyglot verify collection.png
 polyglot unpack collection.png -d restored/
 
-# Run the browser UI (open the printed URL).
-polyglot serve --bind 0.0.0.0 --port 8765
+# Run the browser UI on this computer (loopback by default).
+polyglot serve --port 8765
+
+# Optional: allow devices on your trusted local network to connect.
+polyglot serve --lan --port 8765
 ```
 
 For a quick source checkout without installing:
@@ -51,7 +54,7 @@ polyglot inspect FILE [--json]
 polyglot verify FILE [--key KEY] [--json]
 polyglot formats [--category CATEGORY] [--json]
 polyglot doctor [--json]
-polyglot serve [--bind 0.0.0.0] [--port 8765]
+polyglot serve [--lan | --bind ADDRESS] [--port 8765]
 polyglot update [--check | --yes] [--json]
 ```
 
@@ -71,7 +74,7 @@ polyglot update [--check | --yes] [--json]
 
 ## Web UI
 
-The web app is served by `polyglot serve` using `http.server`; it needs no Flask, Node, database, or CDN. It supports drag-and-drop creation, generated or first-file byte-exact hosts, download, inspect with an SVG byte map, unpack, and a searchable format catalog. The server binds to `0.0.0.0` by default and accepts same-origin reverse-proxy preview hosts.
+The web app is served by `polyglot serve` using `http.server`; it needs no Flask, Node, database, or CDN. It supports drag-and-drop creation, generated or first-file byte-exact hosts, download, inspect with an SVG byte map, unpack, and a searchable format catalog. The server listens on this computer only by default. Use `polyglot serve --lan` to allow devices on your local network; LAN mode has no sign-in, so use it only on a trusted private network and never expose it to the public internet. Same-origin reverse-proxy preview hosts are supported.
 
 ## Format integrity and safety
 

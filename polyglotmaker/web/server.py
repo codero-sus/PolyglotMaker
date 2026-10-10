@@ -282,8 +282,8 @@ def _bounded_int(fields: dict[str, list[str]], name: str, default: int, low: int
     return value
 
 
-def serve(bind: str = "0.0.0.0", port: int = 8765) -> None:
-    """Run until interrupted. The server accepts preview proxy hosts/origins."""
+def serve(bind: str = "127.0.0.1", port: int = 8765) -> None:
+    """Run until interrupted; bind to loopback by default or an explicit network interface."""
     class Server(ThreadingHTTPServer):
         allow_reuse_address = True
         daemon_threads = True

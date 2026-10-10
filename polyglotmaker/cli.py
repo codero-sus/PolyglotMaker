@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 from typing import Any, Sequence
@@ -97,8 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor.add_argument("--json", action="store_true")
 
     p_serve = sub.add_parser("serve", help="run the browser UI and JSON API")
-    p_serve.add_argument("--bind", default="0.0.0.0", help="interface to bind (default 0.0.0.0)")
-    p_serve.add_argument("--port", type=int, default=8765)
+    serve_network = p_serve.add_mutually_exclusive_group()
+    serve_network.add_argument("--lan", action="store_true", help="allow trusted local-network devices to connect")
+    serve_network.add_argument("--bind", help="bind address (default 127.0.0.1; advanced use)")
+    p_serve.add_argument("--port", type=int, default=8765, help="TCP port (default 8765)")
 
     p_update = sub.add_parser("update", help="check for and install source from the pinned GitHub branch")
     update_action = p_update.add_mutually_exclusive_group()
@@ -256,10 +260,64 @@ def _do_doctor(args: argparse.Namespace) -> int:
     return 0 if passed == total else 1
 
 
+def _loopback_bind(bind: str) -> bool:
+    if bind.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(bind).is_loopback
+    except ValueError:
+        return False
+
+
+def _private_ipv4(address: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return parsed.version == 4 and parsed.is_private and not parsed.is_loopback and not parsed.is_link_local
+
+
+def _lan_ipv4_address() -> str | None:
+    """Pick the primary private IPv4 address without sending a network packet."""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 80))
+            address = probe.getsockname()[0]
+        if _private_ipv4(address):
+            return address
+    except OSError:
+        pass
+
+    try:
+        addresses = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return None
+    for address in addresses:
+        candidate = address[4][0]
+        if _private_ipv4(candidate):
+            return candidate
+    return None
+
+
 def _do_serve(args: argparse.Namespace) -> int:
     from .web.server import serve
-    print(f"PolyglotMaker web UI: http://{args.bind}:{args.port}/ (Ctrl+C to stop)")
-    serve(args.bind, args.port)
+
+    if args.lan:
+        # Prefer one private interface; fall back to all IPv4 interfaces on systems
+        # that do not report a LAN address, and warn about the broader exposure below.
+        bind = _lan_ipv4_address() or "0.0.0.0"
+    else:
+        bind = args.bind or "127.0.0.1"
+
+    local_host = "127.0.0.1" if bind in {"0.0.0.0", ""} else bind
+    print(f"PolyglotMaker web UI: http://{local_host}:{args.port}/ (Ctrl+C to stop)")
+    network_exposed = args.lan or not _loopback_bind(bind)
+    if network_exposed:
+        lan_host = "<this-device-LAN-IP>" if bind in {"0.0.0.0", ""} else bind
+        print(f"LAN address: http://{lan_host}:{args.port}/")
+        print("Warning: LAN access has no sign-in; use only on a trusted private network, never public Wi-Fi, port forwarding, or the public internet.")
+    serve(bind, args.port)
     return 0
 
 
