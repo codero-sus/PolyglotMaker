@@ -1,45 +1,50 @@
 # Updating PolyglotMaker from GitHub
 
-PolyglotMaker has two GitHub-based update paths:
+Every updater in this project is pinned to one source branch: **`arena/a02bfaaf-polyglotmaker`**. It does not follow `main`, another branch, GitHub Releases, or PyPI.
 
-- **Installed Python package:** `polyglot update` downloads the active commit archive and installs it with the current interpreter's `pip`.
-- **Repository checkout:** `updater.py`, `updater.sh`, and `updater.bat` fetch from GitHub and fast-forward the local checkout with Git. This updates the files in the repository itself.
+There are two GitHub update paths:
 
-Neither path depends on GitHub Releases or PyPI.
+- **Installed Python package:** `polyglot update` downloads a commit-pinned archive from the fixed branch and installs it with the selected Python's `pip`.
+- **Repository checkout:** `updater.py`, `updater.sh`, and `updater.bat` fetch that same fixed branch and fast-forward the local checkout with Git.
+
+## Python selection
+
+Interpreter selection is shared by the CLI and root launchers, in this order:
+
+1. Environment variable `2PY2` (the name means “second Python”; it does **not** mean Python 2).
+2. The first active line in the project-root `python.env` file.
+3. The platform's Python 3 default (`python3` on macOS/Linux, `py -3` on Windows, with a `python` fallback).
+
+`python.env` is optional and ignored by Git. Set it to the executable path; paths may contain spaces, but do not surround them with quotes. A `PYTHON=...` or `2PY2=...` assignment is also accepted. Relative paths resolve from the project root.
+
+```text
+# python.env examples — use one active line
+.venv/bin/python
+# or on Windows: C:\PortablePython\python.exe
+# or: PYTHON=/absolute/path/to/python
+```
+
+The selected interpreter must be Python 3.10 or newer. Portable or embeddable Python executables can be selected the same way; an embeddable interpreter needs `pip` installed for the installed-package updater, while the checkout updater does not use `pip`. `python.env.example` is a starter template. The environment variable takes precedence over the file. On POSIX shells, a digit-leading name cannot be assigned with normal shell syntax, so pass it for a command with `env '2PY2=/path/to/python' polyglot update --check` or `env '2PY2=/path/to/python' ./updater.sh`. On Windows, use `set "2PY2=C:\PortablePython\python.exe"` before running `updater.bat`.
 
 ## Installed-package updater
 
 ```sh
-# Check the GitHub default branch without installing
-polyglot update --check
-
-# Choose a branch explicitly
-polyglot update --check --branch main
-
-# Review and interactively confirm an install
-polyglot update
-
-# Explicitly install without a prompt (for automation)
-polyglot update --yes
-
-# Machine-readable check; add --yes to install
-polyglot update --json
+polyglot update --check       # check the pinned GitHub branch
+polyglot update               # prompt before installing
+polyglot update --yes         # install without prompting
+polyglot update --json        # machine-readable check; add --yes to install
 ```
 
-It queries GitHub for the repository's default branch and latest commit, then installs the HTTPS archive pinned to that commit using `python -m pip install --upgrade --force-reinstall`. A successful update records its commit under `~/.polyglotmaker/` for later checks. Restart running PolyglotMaker processes after installing.
+The updater verifies the GitHub commit SHA, then runs `-m pip install --upgrade --force-reinstall` using the selected Python. After a successful install it records the commit in `~/.polyglotmaker/` for later checks. Restart running PolyglotMaker processes after installation.
 
 ## Repository updater scripts
 
-Run from a clean checkout:
+Run from a clean Git checkout:
 
 ```sh
-python updater.py --check       # Python entry point
+python updater.py --check       # check only
 ./updater.sh                    # macOS/Linux: fetch and fast-forward
 updater.bat                     # Windows command prompt: fetch and fast-forward
 ```
 
-The scripts update the **currently checked-out local branch** from the matching branch on `https://github.com/codero-sus/PolyglotMaker`. `--branch BRANCH` selects the GitHub branch to fetch; it never switches the local branch. `--check` fetches and reports without changing files, and `--json` prints machine-readable status.
-
-Git must be installed and the working tree must be clean. The updater refuses to overwrite local edits, create merge commits, or resolve divergent histories; it only performs a fast-forward. Commit or stash changes and resolve divergence manually before retrying.
-
-Use `--branch BRANCH` when you intentionally want to fast-forward the current checkout from a different remote branch; the updater still never switches local branches.
+These scripts always fetch `refs/heads/arena/a02bfaaf-polyglotmaker` from the official GitHub repository. They never switch branches, overwrite local edits, create merge commits, or resolve divergent histories. The local checkout must have a clean working tree and Git installed. `--json` prints machine-readable status.

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
@@ -14,8 +16,10 @@ from urllib.error import HTTPError
 from polyglotmaker.cli import main
 from polyglotmaker.update import (
     GITHUB_API,
+    GITHUB_UPDATE_BRANCH,
     GitHubSnapshot,
     UpdateError,
+    configured_python,
     fetch_latest_snapshot,
     install_snapshot,
     is_snapshot_installed,
@@ -30,45 +34,56 @@ def _response(payload):
     return response
 
 
+class PythonSelectionTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "symlink setup is platform-dependent on Windows")
+    def test_python_env_selects_a_relative_project_interpreter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            configured = root / "portable" / "python"
+            configured.parent.mkdir()
+            configured.symlink_to(sys.executable)
+            (root / "python.env").write_text("# portable runtime\nportable/python\n", encoding="utf-8")
+            with patch.dict("os.environ", {"2PY2": ""}):
+                self.assertEqual(configured_python(root), str(configured))
+
+    def test_2py2_environment_variable_overrides_python_env(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "python.env").write_text("/definitely/not/python\n", encoding="utf-8")
+            with patch.dict("os.environ", {"2PY2": sys.executable}):
+                self.assertEqual(configured_python(root), sys.executable)
+
+    def test_missing_configured_python_is_reported(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "python.env").write_text("/missing/python\n", encoding="utf-8")
+            with patch.dict("os.environ", {"2PY2": ""}):
+                with self.assertRaisesRegex(UpdateError, "not found"):
+                    configured_python(root)
+
+
 class GitHubLookupTests(unittest.TestCase):
-    def test_default_branch_is_resolved_and_archive_is_pinned_to_its_commit(self):
+    def test_snapshot_is_resolved_from_the_pinned_branch(self):
         sha = "A" * 40
-        with patch(
-            "polyglotmaker.update.urlopen",
-            side_effect=[_response({"default_branch": "main"}), _response({"sha": sha})],
-        ) as opener:
+        with patch("polyglotmaker.update.urlopen", return_value=_response({"sha": sha})) as opener:
             snapshot = fetch_latest_snapshot()
 
-        self.assertEqual(snapshot.branch, "main")
+        self.assertEqual(snapshot.branch, GITHUB_UPDATE_BRANCH)
         self.assertEqual(snapshot.commit, sha.lower())
         self.assertEqual(snapshot.url, f"https://github.com/codero-sus/PolyglotMaker/commit/{sha.lower()}")
         self.assertEqual(
             snapshot.source_url,
             f"https://github.com/codero-sus/PolyglotMaker/archive/{sha.lower()}.zip",
         )
-        self.assertEqual(opener.call_count, 2)
-        self.assertEqual(opener.call_args_list[0].args[0].full_url, GITHUB_API)
-        self.assertEqual(opener.call_args_list[1].args[0].full_url, f"{GITHUB_API}/commits/main")
-        self.assertIn("PolyglotMaker/", opener.call_args_list[0].args[0].get_header("User-agent"))
-
-    def test_selected_branch_is_url_encoded(self):
-        with patch(
-            "polyglotmaker.update.urlopen",
-            side_effect=[_response({"default_branch": "main"}), _response({"sha": "b" * 40})],
-        ) as opener:
-            snapshot = fetch_latest_snapshot("feature/release-candidate")
-
-        self.assertEqual(snapshot.branch, "feature/release-candidate")
+        self.assertEqual(opener.call_count, 1)
         self.assertEqual(
-            opener.call_args_list[1].args[0].full_url,
-            f"{GITHUB_API}/commits/feature%2Frelease-candidate",
+            opener.call_args.args[0].full_url,
+            f"{GITHUB_API}/commits/arena%2Fa02bfaaf-polyglotmaker",
         )
+        self.assertIn("PolyglotMaker/", opener.call_args.args[0].get_header("User-agent"))
 
     def test_bad_commit_id_is_rejected(self):
-        with patch(
-            "polyglotmaker.update.urlopen",
-            side_effect=[_response({"default_branch": "main"}), _response({"sha": "not-a-commit"})],
-        ):
+        with patch("polyglotmaker.update.urlopen", return_value=_response({"sha": "not-a-commit"})):
             with self.assertRaises(UpdateError):
                 fetch_latest_snapshot()
 
@@ -80,25 +95,25 @@ class GitHubLookupTests(unittest.TestCase):
 
     def test_update_state_marker_tracks_installed_commit_and_environment(self):
         snapshot = GitHubSnapshot(
-            "main", "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
+            GITHUB_UPDATE_BRANCH, "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
         )
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "github-update-state.json"
             with patch("polyglotmaker.update._local_checkout", return_value=None), patch(
                 "polyglotmaker.update._state_path", return_value=marker
-            ), patch("polyglotmaker.update._python_prefix", return_value="/test/python"):
+            ), patch("polyglotmaker.update._python_identity", return_value="/test/python"):
                 self.assertFalse(is_snapshot_installed(snapshot))
                 record_installed_snapshot(snapshot)
                 self.assertTrue(is_snapshot_installed(snapshot))
                 payload = json.loads(marker.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["commit"], snapshot.commit)
-        self.assertEqual(payload["branch"], "main")
-        self.assertEqual(payload["python_prefix"], "/test/python")
+        self.assertEqual(payload["branch"], GITHUB_UPDATE_BRANCH)
+        self.assertEqual(payload["python_executable"], "/test/python")
 
     def test_checkout_containing_remote_commit_is_not_offered_a_downgrade(self):
         snapshot = GitHubSnapshot(
-            "main", "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
+            GITHUB_UPDATE_BRANCH, "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
         )
         with patch("polyglotmaker.update._local_checkout", return_value=(Path("/repo"), "b" * 40)), patch(
             "polyglotmaker.update.subprocess.run", return_value=subprocess.CompletedProcess([], 0)
@@ -108,12 +123,15 @@ class GitHubLookupTests(unittest.TestCase):
 
     def test_pip_installer_uses_a_commit_archive_and_never_a_shell(self):
         snapshot = GitHubSnapshot(
-            "main", "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
+            GITHUB_UPDATE_BRANCH, "a" * 40, "https://github.com/commit", "https://github.com/archive.zip"
         )
-        with patch("polyglotmaker.update.subprocess.run") as runner:
+        with patch("polyglotmaker.update.configured_python", return_value="/portable/python"), patch(
+            "polyglotmaker.update.subprocess.run"
+        ) as runner:
             install_snapshot(snapshot, capture_output=True)
 
         command = runner.call_args.args[0]
+        self.assertEqual(command[0], "/portable/python")
         self.assertIn("--force-reinstall", command)
         self.assertIn(snapshot.source_url, command)
         self.assertTrue(runner.call_args.kwargs["capture_output"])
@@ -130,7 +148,6 @@ class RepositoryCheckoutUpdateTests(unittest.TestCase):
             str(self.root),
             "",  # clean working tree
             "main",
-            "main",  # validated ref
             self.local_commit,
             self.remote_commit,
         ]
@@ -153,7 +170,7 @@ class RepositoryCheckoutUpdateTests(unittest.TestCase):
                 )
                 return result.stdout.strip()
 
-            git("checkout", "-b", "main")
+            git("checkout", "-b", GITHUB_UPDATE_BRANCH)
             git("config", "user.name", "Updater test")
             git("config", "user.email", "updater-test@example.invalid")
             file = checkout / "version.txt"
@@ -161,12 +178,12 @@ class RepositoryCheckoutUpdateTests(unittest.TestCase):
             git("add", "version.txt")
             git("commit", "-m", "first")
             first_commit = git("rev-parse", "HEAD")
-            git("push", "-u", "origin", "main")
+            git("push", "-u", "origin", GITHUB_UPDATE_BRANCH)
 
             file.write_text("second\n", encoding="utf-8")
             git("commit", "-am", "second")
             second_commit = git("rev-parse", "HEAD")
-            git("push", "origin", "main")
+            git("push", "origin", GITHUB_UPDATE_BRANCH)
             git("reset", "--hard", first_commit)
 
             with patch("polyglotmaker.update.GITHUB_CLONE_URL", str(remote)):
@@ -190,7 +207,7 @@ class RepositoryCheckoutUpdateTests(unittest.TestCase):
         ) as git:
             result = update_repository_checkout(self.root, check_only=True)
 
-        self.assertEqual(result.branch, "main")
+        self.assertEqual(result.branch, GITHUB_UPDATE_BRANCH)
         self.assertEqual(result.previous_commit, self.local_commit)
         self.assertEqual(result.latest_commit, self.remote_commit)
         self.assertTrue(result.update_available)
@@ -238,27 +255,26 @@ class RepositoryCheckoutUpdateTests(unittest.TestCase):
             with self.assertRaisesRegex(UpdateError, "diverged"):
                 update_repository_checkout(self.root)
 
-    def test_explicit_remote_branch_is_fetched_without_switching_local_branch(self):
-        outputs = [str(self.root), "", "main", "release", self.local_commit, self.remote_commit]
+    def test_checkout_updater_fetches_only_the_pinned_branch(self):
         ancestry = [
             subprocess.CompletedProcess([], 1, "", ""),
             subprocess.CompletedProcess([], 0, "", ""),
         ]
-        with patch("polyglotmaker.update._git_output", side_effect=outputs), patch(
+        with patch("polyglotmaker.update._git_output", side_effect=self._outputs()), patch(
             "polyglotmaker.update._git_result",
             side_effect=[subprocess.CompletedProcess([], 0, "", ""), *ancestry],
         ) as git:
-            result = update_repository_checkout(self.root, branch="release", check_only=True)
+            result = update_repository_checkout(self.root, check_only=True)
 
-        self.assertEqual(result.branch, "release")
+        self.assertEqual(result.branch, GITHUB_UPDATE_BRANCH)
         self.assertTrue(result.update_available)
-        self.assertEqual(git.call_args_list[0].args[-1], "refs/heads/release")
+        self.assertEqual(git.call_args_list[0].args[-1], f"refs/heads/{GITHUB_UPDATE_BRANCH}")
 
 
 class UpdateCommandTests(unittest.TestCase):
     def setUp(self):
         self.snapshot = GitHubSnapshot(
-            branch="main",
+            branch=GITHUB_UPDATE_BRANCH,
             commit="c" * 40,
             url="https://github.com/codero-sus/PolyglotMaker/commit/" + "c" * 40,
             source_url="https://github.com/codero-sus/PolyglotMaker/archive/" + "c" * 40 + ".zip",
@@ -266,22 +282,20 @@ class UpdateCommandTests(unittest.TestCase):
 
     def test_check_only_never_installs(self):
         output = io.StringIO()
-        with patch("polyglotmaker.cli.fetch_latest_snapshot", return_value=self.snapshot), patch(
+        with patch("polyglotmaker.cli.fetch_latest_snapshot", return_value=self.snapshot) as fetch, patch(
             "polyglotmaker.cli.is_snapshot_installed", return_value=False
         ), patch("polyglotmaker.cli.install_snapshot") as installer, redirect_stdout(output):
             result = main(["update", "--check"])
 
         self.assertEqual(result, 0)
+        fetch.assert_called_once_with()
         self.assertIn("GitHub update available", output.getvalue())
         installer.assert_not_called()
 
-    def test_branch_option_is_forwarded(self):
-        output = io.StringIO()
-        with patch("polyglotmaker.cli.fetch_latest_snapshot", return_value=self.snapshot) as fetch, patch(
-            "polyglotmaker.cli.is_snapshot_installed", return_value=True
-        ), redirect_stdout(output):
-            self.assertEqual(main(["update", "--check", "--branch", "release"]), 0)
-        fetch.assert_called_once_with("release")
+    def test_cli_rejects_branch_override(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                main(["update", "--branch", "main"])
 
     def test_noninteractive_default_is_safe_and_does_not_install(self):
         output = io.StringIO()

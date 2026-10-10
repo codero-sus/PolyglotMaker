@@ -52,10 +52,10 @@ polyglot verify FILE [--key KEY] [--json]
 polyglot formats [--category CATEGORY] [--json]
 polyglot doctor [--json]
 polyglot serve [--bind 0.0.0.0] [--port 8765]
-polyglot update [--check | --yes] [--branch BRANCH] [--json]
+polyglot update [--check | --yes] [--json]
 ```
 
-`polyglot update --check` checks the latest commit on GitHub without installing it; use `--branch BRANCH` to select a branch. `polyglot update` installs from a commit-pinned GitHub archive with the active Python interpreter's `pip` (use `--yes` to skip confirmation). For a local Git checkout, `python updater.py`, `./updater.sh`, or `updater.bat` fetches and fast-forwards the checkout from GitHub; it refuses dirty or diverged worktrees. No GitHub Release is required. See [`docs/UPDATING.md`](docs/UPDATING.md).
+`polyglot update` and the root `updater.py` / `updater.sh` / `updater.bat` update **only** from GitHub branch `arena/a02bfaaf-polyglotmaker`. The CLI installs a commit-pinned archive; the root scripts fast-forward a clean local Git checkout and refuse dirty or diverged worktrees. Use `--check` to preview; `polyglot update --yes` installs without prompting. No GitHub Release is required. Interpreter selection and details are in [`docs/UPDATING.md`](docs/UPDATING.md).
 
 ### Embedding modes
 
