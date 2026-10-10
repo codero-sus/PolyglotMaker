@@ -100,11 +100,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--bind", default="0.0.0.0", help="interface to bind (default 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8765)
 
-    p_update = sub.add_parser("update", help="check for and install the latest source from GitHub")
+    p_update = sub.add_parser("update", help="check for and install source from the pinned GitHub branch")
     update_action = p_update.add_mutually_exclusive_group()
     update_action.add_argument("--check", action="store_true", help="check only; do not install")
     update_action.add_argument("-y", "--yes", action="store_true", help="install without prompting")
-    p_update.add_argument("--branch", help="GitHub branch to update from (default: repository's default branch)")
     p_update.add_argument("--json", action="store_true", help="print machine-readable status")
 
     return parser
@@ -267,7 +266,7 @@ def _do_serve(args: argparse.Namespace) -> int:
 def _do_update(args: argparse.Namespace) -> int:
     current_version = __version__
     try:
-        snapshot = fetch_latest_snapshot(args.branch)
+        snapshot = fetch_latest_snapshot()
         already_current = is_snapshot_installed(snapshot)
     except UpdateError as exc:
         report = {"status": "error", "current_version": current_version, "error": str(exc)}

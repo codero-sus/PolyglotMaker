@@ -1,9 +1,8 @@
 """Check and install the latest PolyglotMaker source directly from GitHub.
 
-The updater follows the repository's default branch (or a user-selected
-branch), pins installation to the commit fetched from GitHub, and records that
-commit locally after a successful install. It does not depend on GitHub
-Releases being published.
+The updater follows one fixed GitHub branch, pins installation to the commit
+fetched from GitHub, and records that commit locally after a successful install.
+It does not depend on GitHub Releases being published.
 """
 
 from __future__ import annotations
@@ -11,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -25,6 +25,7 @@ from .core.errors import PolyglotError
 GITHUB_REPOSITORY = "codero-sus/PolyglotMaker"
 GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
 GITHUB_CLONE_URL = f"https://github.com/{GITHUB_REPOSITORY}.git"
+GITHUB_UPDATE_BRANCH = "arena/a02bfaaf-polyglotmaker"
 REQUEST_TIMEOUT_SECONDS = 8
 MAX_GITHUB_RESPONSE_BYTES = 1024 * 1024
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -32,6 +33,90 @@ _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 class UpdateError(PolyglotError):
     """A GitHub update check or install could not be completed safely."""
+
+
+def _strip_path_quotes(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1].strip()
+    return value
+
+
+def _python_setting(root: Path) -> str | None:
+    override = os.environ.get("2PY2", "").strip()
+    if override:
+        return _strip_path_quotes(override)
+
+    config = root / "python.env"
+    if not config.is_file():
+        return None
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise UpdateError(f"could not read {config}: {exc}") from exc
+    for raw_line in lines:
+        value = raw_line.strip()
+        if not value or value.startswith("#"):
+            continue
+        if "=" in value:
+            key, candidate = value.split("=", 1)
+            if key.strip().upper() in {"PYTHON", "PYTHON_EXE", "PYTHON_PATH", "2PY2"}:
+                value = candidate.strip()
+        value = _strip_path_quotes(value)
+        if value:
+            return value
+    return None
+
+
+def configured_python(root: str | os.PathLike[str] | None = None) -> str:
+    """Resolve the interpreter override (``2PY2`` or root ``python.env``)."""
+
+    roots = [Path(root).resolve()] if root is not None else [Path.cwd().resolve()]
+    module_root = Path(__file__).resolve().parents[1]
+    if module_root not in roots:
+        roots.append(module_root)
+
+    selected = None
+    for candidate_root in roots:
+        selected = _python_setting(candidate_root)
+        if selected:
+            break
+    if not selected:
+        return sys.executable
+
+    candidate = Path(selected).expanduser()
+    if not candidate.is_absolute():
+        for candidate_root in roots:
+            relative_path = candidate_root / candidate
+            if relative_path.is_file():
+                candidate = relative_path
+                break
+    if candidate.is_file():
+        executable = str(candidate.absolute())
+    else:
+        executable = shutil.which(selected) or ""
+    if not executable:
+        raise UpdateError(f"configured Python executable was not found: {selected}")
+
+    try:
+        probe = subprocess.run(
+            [executable, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise UpdateError(f"could not start configured Python {executable!r}: {exc}") from exc
+    if probe.returncode != 0:
+        raise UpdateError(f"configured Python failed its version check: {executable}")
+    try:
+        version = tuple(int(part) for part in probe.stdout.strip().split(".", 1))
+    except ValueError as exc:
+        raise UpdateError(f"configured Python returned an invalid version: {probe.stdout.strip()!r}") from exc
+    if len(version) != 2 or version < (3, 10):
+        raise UpdateError(f"configured Python must be 3.10 or newer (found {probe.stdout.strip()})")
+    return executable
 
 
 @dataclass(frozen=True)
@@ -91,23 +176,10 @@ def _github_json(url: str) -> object:
         raise UpdateError("GitHub returned invalid update metadata") from exc
 
 
-def fetch_latest_snapshot(branch: str | None = None) -> GitHubSnapshot:
-    """Resolve a branch to its latest commit and return its pinned archive URL."""
+def fetch_latest_snapshot() -> GitHubSnapshot:
+    """Resolve the pinned updater branch to its latest commit."""
 
-    repository = _github_json(GITHUB_API)
-    if not isinstance(repository, dict):
-        raise UpdateError("GitHub returned invalid repository metadata")
-    default_branch = repository.get("default_branch")
-    selected_branch = branch if branch is not None else default_branch
-    if (
-        not isinstance(selected_branch, str)
-        or not selected_branch
-        or len(selected_branch) > 255
-        or any(ord(char) < 32 for char in selected_branch)
-    ):
-        raise UpdateError("GitHub returned an invalid default branch name")
-
-    branch_path = quote(selected_branch, safe="")
+    branch_path = quote(GITHUB_UPDATE_BRANCH, safe="")
     commit_payload = _github_json(f"{GITHUB_API}/commits/{branch_path}")
     if not isinstance(commit_payload, dict):
         raise UpdateError("GitHub returned invalid branch commit metadata")
@@ -116,7 +188,7 @@ def fetch_latest_snapshot(branch: str | None = None) -> GitHubSnapshot:
         raise UpdateError("GitHub returned an invalid commit identifier")
     commit = commit.lower()
     return GitHubSnapshot(
-        branch=selected_branch,
+        branch=GITHUB_UPDATE_BRANCH,
         commit=commit,
         url=f"https://github.com/{GITHUB_REPOSITORY}/commit/{commit}",
         source_url=f"https://github.com/{GITHUB_REPOSITORY}/archive/{commit}.zip",
@@ -145,8 +217,8 @@ def _state_path() -> Path:
     return Path.home() / ".polyglotmaker" / "github-update-state.json"
 
 
-def _python_prefix() -> str:
-    return os.path.normcase(os.path.realpath(sys.prefix))
+def _python_identity() -> str:
+    return os.path.normcase(os.path.abspath(configured_python()))
 
 
 def is_snapshot_installed(snapshot: GitHubSnapshot) -> bool:
@@ -157,7 +229,7 @@ def is_snapshot_installed(snapshot: GitHubSnapshot) -> bool:
         root, local_commit = checkout
         if local_commit == snapshot.commit:
             return True
-        # A development checkout may already contain the default-branch commit
+        # A development checkout may already contain the pinned updater commit
         # while being on a newer feature branch. Avoid offering a downgrade.
         try:
             result = subprocess.run(
@@ -180,7 +252,7 @@ def is_snapshot_installed(snapshot: GitHubSnapshot) -> bool:
         and marker.get("repository") == GITHUB_REPOSITORY
         and marker.get("branch") == snapshot.branch
         and marker.get("commit") == snapshot.commit
-        and marker.get("python_prefix") == _python_prefix()
+        and marker.get("python_executable") == _python_identity()
     )
 
 
@@ -194,7 +266,7 @@ def record_installed_snapshot(snapshot: GitHubSnapshot) -> None:
         "repository": GITHUB_REPOSITORY,
         "branch": snapshot.branch,
         "commit": snapshot.commit,
-        "python_prefix": _python_prefix(),
+        "python_executable": _python_identity(),
     }
     temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, path)
@@ -203,10 +275,10 @@ def record_installed_snapshot(snapshot: GitHubSnapshot) -> None:
 def install_snapshot(
     snapshot: GitHubSnapshot, *, capture_output: bool = False
 ) -> subprocess.CompletedProcess[str]:
-    """Install a commit-pinned GitHub archive with the active Python's pip."""
+    """Install a commit-pinned GitHub archive with the selected Python's pip."""
 
     command = [
-        sys.executable,
+        configured_python(),
         "-m",
         "pip",
         "install",
@@ -247,7 +319,7 @@ def _is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
 
 
 def update_repository_checkout(
-    repo_root: str | os.PathLike[str], *, branch: str | None = None, check_only: bool = False
+    repo_root: str | os.PathLike[str], *, check_only: bool = False
 ) -> CheckoutUpdate:
     """Fetch a GitHub branch and optionally fast-forward this clean checkout.
 
@@ -267,8 +339,7 @@ def update_repository_checkout(
     current_branch = _git_output(root, "branch", "--show-current")
     if not current_branch:
         raise UpdateError("cannot update a detached HEAD; check out a branch first")
-    target_branch = current_branch if branch is None else branch
-    _git_output(root, "check-ref-format", "--branch", target_branch)
+    target_branch = GITHUB_UPDATE_BRANCH
     fetch = _git_result(
         root,
         "fetch",
