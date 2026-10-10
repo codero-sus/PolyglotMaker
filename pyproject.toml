@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polyglotmaker"
+version = "0.1.0"
+description = "Create, inspect, verify, and unpack multi-format files"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "PolyglotMaker contributors" }]
+keywords = ["polyglot", "file-format", "archive", "steganography", "ctf"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/codero-sus/PolyglotMaker"
+Repository = "https://github.com/codero-sus/PolyglotMaker"
+Issues = "https://github.com/codero-sus/PolyglotMaker/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7", "Pillow>=10", "pypdf>=4", "pefile>=2023", "mutagen>=1.47"]
+
+[project.scripts]
+polyglot = "polyglotmaker.cli:main"
+polyglotmaker = "polyglotmaker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["polyglotmaker*"]
+
+[tool.setuptools.package-data]
+"polyglotmaker.web" = ["static/*.html", "static/*.js", "static/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

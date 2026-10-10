@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>PolyglotMaker — multi-format file studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <a class="brand" href="/" aria-label="PolyglotMaker home">
+        <span class="brand-mark"><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>polyglot</strong><small>MAKER / STUDIO</small></span>
+      </a>
+      <div class="rail-caption">WORKSPACE</div>
+      <nav class="side-nav" aria-label="Main navigation">
+        <button class="nav-item active" data-view="make"><span class="nav-icon">✳</span><span>Create</span><kbd>01</kbd></button>
+        <button class="nav-item" data-view="unpack"><span class="nav-icon">↙</span><span>Unpack</span><kbd>02</kbd></button>
+        <button class="nav-item" data-view="inspect"><span class="nav-icon">⌕</span><span>Inspect</span><kbd>03</kbd></button>
+        <button class="nav-item" data-view="formats"><span class="nav-icon">▦</span><span>Formats</span><kbd>04</kbd></button>
+      </nav>
+      <div class="rail-spacer"></div>
+      <div class="rail-status"><span class="status-dot"></span><span>LOCAL ENGINE READY</span></div>
+      <div class="rail-footer">Python stdlib · No uploads leave this server</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb"><span>PolyglotMaker</span><span class="crumb-slash">/</span><strong id="crumbCurrent">Create</strong></div>
+        <div class="top-actions"><span class="version-pill" id="versionLabel">v0.1.0</span><a class="safety-link" href="#safety">Responsible use <span>↗</span></a></div>
+      </header>
+
+      <section class="view active" id="view-make">
+        <div class="page-heading">
+          <div><div class="eyebrow">THE MULTI-FORMAT WORKBENCH</div><h1>One file. <em>Many formats.</em></h1>
+            <p>Combine arbitrary files into a host that stays recognizable, then restore every byte when you need it.</p></div>
+          <div class="heading-orbit" aria-hidden="true"><div class="orbit-ring ring-a"></div><div class="orbit-ring ring-b"></div><div class="orbit-core">PLG</div><span class="orbit-dot dot-a"></span><span class="orbit-dot dot-b"></span></div>
+        </div>
+
+        <div class="workspace-grid">
+          <div class="column-main">
+            <section class="panel input-panel">
+              <div class="panel-head"><div><span class="step-number">01</span><div><h2>Add your files</h2><p>Any type, any mix. Files are stored losslessly.</p></div></div><span class="count-pill" id="fileCount">0 FILES</span></div>
+              <label class="drop-zone" id="dropZone" for="payloadFiles">
+                <input id="payloadFiles" type="file" multiple>
+                <span class="upload-glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span>
+                <strong>Drop files here</strong><span>or <b>browse your device</b></span><small>Mix formats freely · up to 256 MB per request</small>
+              </label>
+              <div class="file-list" id="fileList" aria-live="polite"><div class="empty-files">Your selected files will appear here.</div></div>
+            </section>
+
+            <section class="panel options-panel">
+              <div class="panel-head"><div><span class="step-number">02</span><div><h2>Choose a host</h2><p>The first format in the output file.</p></div></div><span class="auto-badge"><i></i> SMART PICK</span></div>
+              <div class="field-grid">
+                <label class="field"><span>Host format</span><select id="hostSelect"><option value="auto">Auto — choose from the first file</option></select><small>Use a generated shell, or preserve one of your real files as the host.</small></label>
+                <label class="field"><span>Payload storage</span><select id="embedMode"><option value="append">Append bundle — best compatibility</option><option value="native">Native slot — keep strict formats valid</option><option value="none">Host only — do not store payloads</option></select><small>Strict text hosts automatically embed a native bundle.</small></label>
+                <label class="field"><span>Bundle store</span><select id="storeSelect"><option value="zip">ZIP — opens in common archive tools</option><option value="raw">Raw — smaller framing, PolyglotMaker only</option></select></label>
+                <label class="field"><span>Compression</span><select id="compressSelect"><option value="deflate">Deflate</option><option value="none">None</option><option value="bzip2">Bzip2</option><option value="lzma">LZMA</option></select></label>
+              </div>
+              <label class="host-file-choice"><input type="checkbox" id="useFirstAsHost"><span class="fake-check"></span><span><strong>Preserve the first selected file as the host</strong><small>Keep its original bytes; the file must match the selected host format.</small></span></label>
+              <details class="advanced-options"><summary><span class="summary-chevron">⌄</span> Advanced host layers <span class="summary-note">scanner-visible layers, not offset-zero formats</span></summary>
+                <label class="field"><span>Also add valid format layers</span><select id="alsoSelect" multiple size="5" aria-label="Additional format layers"></select><small>Choose additional complete file structures to place after the host. The host remains at byte 0.</small></label>
+              </details>
+              <label class="obfuscate-row"><input type="checkbox" id="obfuscateToggle"><span class="fake-check"></span><span><strong>Obfuscate payload bundle</strong><small>Casual byte-scrambling only — <b>not encryption</b>.</small></span></label>
+              <div class="key-row" id="keyRow" hidden><label class="field"><span>Obfuscation key</span><input id="obfuscationKey" type="password" autocomplete="new-password" placeholder="Choose a key for this bundle"></label></div>
+            </section>
+            <div class="make-footer"><p><span class="shield-icon">◇</span> All inputs are opaque payloads. Nothing is executed or converted.</p><button class="primary-button" id="makeButton"><span>Create polyglot</span><span class="button-arrow">↗</span></button></div>
+          </div>
+
+          <aside class="column-side">
+            <section class="side-card host-card"><div class="side-card-label">HOST SNAPSHOT <span class="spark">✦</span></div><div class="host-preview" id="hostPreview"><div class="preview-surface"><div class="preview-stack"><i></i><i></i><i></i><span>?</span></div></div><div class="preview-meta"><strong id="previewFormat">Auto-selected</strong><span id="previewExtension">Waiting for files</span></div></div><div class="side-divider"></div><div class="stat-line"><span>Payload files</span><b id="statFiles">0</b></div><div class="stat-line"><span>File types</span><b id="statTypes">0</b></div><div class="stat-line"><span>Runtime deps</span><b>None</b></div></section>
+            <section class="side-card how-card"><div class="side-card-label">HOW IT WORKS</div><ol><li><span>1</span><div><strong>Host stays native</strong><p>Spec-legal slots where the format has them.</p></div></li><li><span>2</span><div><strong>Payloads stay exact</strong><p>SHA-256 checked; names and timestamps retained.</p></div></li><li><span>3</span><div><strong>Unpack on demand</strong><p>Use the app or <code>polyglot unpack</code>.</p></div></li></ol></section>
+            <div class="privacy-note"><span class="lock-glyph">⌑</span><span><strong>Private by design</strong><small>Runs locally in this workspace. No third-party API calls.</small></span></div>
+          </aside>
+        </div>
+        <div class="result-panel panel" id="makeResult" hidden></div>
+      </section>
+
+      <section class="view" id="view-unpack">
+        <div class="page-heading compact"><div><div class="eyebrow">RESTORE ORIGINAL BYTES</div><h1>Unpack your <em>bundle.</em></h1><p>Choose a PolyglotMaker file to list and restore its original payloads.</p></div></div>
+        <div class="tool-grid"><section class="panel tool-panel"><div class="panel-head"><div><span class="step-number">01</span><div><h2>Select a container</h2><p>The host extension can be anything.</p></div></div></div>
+          <label class="drop-zone small-drop" for="unpackFile"><input id="unpackFile" type="file"><span class="upload-glyph"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span><strong id="unpackFileName">Drop or choose a container</strong><span>PolyglotMaker ZIP, raw, or native host bundle</span></label>
+          <label class="field"><span>Obfuscation key <small class="inline-note">only if the maker used one</small></span><input type="password" id="unpackKey" placeholder="Optional"></label><button class="primary-button full-button" id="unpackButton">List and restore files <span class="button-arrow">↗</span></button>
+          <div id="unpackResult" class="tool-result" hidden></div></section>
+          <section class="panel info-panel"><div class="info-icon">↙</div><h2>Lossless, by design</h2><p>Every restored payload is checked against the manifest's SHA-256 digest. Original filenames, file modes, and modification times are reapplied where the platform allows.</p><div class="info-list"><div><span>01</span> Zip-slip paths are rejected</div><div><span>02</span> Duplicate names remain distinct</div><div><span>03</span> Selective extraction is supported in the CLI</div></div></section></div>
+      </section>
+
+      <section class="view" id="view-inspect">
+        <div class="page-heading compact"><div><div class="eyebrow">UNDER THE HOOD</div><h1>Inspect the <em>byte map.</em></h1><p>See every detected format, its offset, and how honestly it is embedded.</p></div></div>
+        <section class="panel inspector-panel"><div class="inspect-toolbar"><label class="file-picker"><input type="file" id="inspectFile"><span class="upload-glyph tiny"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span><span id="inspectFileName">Choose file to inspect</span></label><button class="secondary-button" id="inspectButton">Inspect file <span>⌕</span></button></div><div id="inspectResult" class="inspect-result" hidden></div></section>
+      </section>
+
+      <section class="view" id="view-formats">
+        <div class="page-heading compact"><div><div class="eyebrow">FORMAT CATALOG</div><h1>Bring <em>anything.</em></h1><p>63 host generators, plus support for arbitrary payload bytes of any type.</p></div><div class="catalog-count"><b id="formatCount">63</b><span>HOST FORMATS</span></div></div>
+        <div class="catalog-controls"><input id="formatSearch" type="search" placeholder="Search formats, extensions, categories…"><select id="categoryFilter"><option value="">All categories</option></select></div><div class="format-grid" id="formatGrid"></div>
+      </section>
+
+      <footer class="site-footer" id="safety"><div><span class="footer-mark">✳</span><span><strong>Responsible use</strong><small>For legitimate distribution, research, steganography demonstrations, and CTFs. This is not an AV-evasion tool.</small></span></div><span class="footer-right">POLYGLOTMAKER <i>·</i> 0.1.0</span></footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
