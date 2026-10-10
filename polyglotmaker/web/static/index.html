@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f3f7f4">
+  <meta name="description" content="Combine arbitrary files in recognizable host formats, then restore every original byte.">
   <title>PolyglotMaker — multi-format file studio</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -16,14 +18,14 @@
       </a>
       <div class="rail-caption">WORKSPACE</div>
       <nav class="side-nav" aria-label="Main navigation">
-        <button class="nav-item active" data-view="make"><span class="nav-icon">✳</span><span>Create</span><kbd>01</kbd></button>
-        <button class="nav-item" data-view="unpack"><span class="nav-icon">↙</span><span>Unpack</span><kbd>02</kbd></button>
-        <button class="nav-item" data-view="inspect"><span class="nav-icon">⌕</span><span>Inspect</span><kbd>03</kbd></button>
-        <button class="nav-item" data-view="formats"><span class="nav-icon">▦</span><span>Formats</span><kbd>04</kbd></button>
+        <button class="nav-item active" data-view="make" aria-label="Create" title="Create"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>Create</span><kbd>01</kbd></button>
+        <button class="nav-item" data-view="unpack" aria-label="Unpack" title="Unpack"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span><span>Unpack</span><kbd>02</kbd></button>
+        <button class="nav-item" data-view="inspect" aria-label="Inspect" title="Inspect"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><span>Inspect</span><kbd>03</kbd></button>
+        <button class="nav-item" data-view="formats" aria-label="Formats" title="Formats"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg></span><span>Formats</span><kbd>04</kbd></button>
       </nav>
       <div class="rail-spacer"></div>
       <div class="rail-status"><span class="status-dot"></span><span>LOCAL ENGINE READY</span></div>
-      <div class="rail-footer">Python stdlib · No uploads leave this server</div>
+      <div class="rail-footer">Files stay in this workspace. No third-party APIs.</div>
     </aside>
 
     <main class="main">
@@ -89,7 +91,7 @@
 
       <section class="view" id="view-inspect">
         <div class="page-heading compact"><div><div class="eyebrow">UNDER THE HOOD</div><h1>Inspect the <em>byte map.</em></h1><p>See every detected format, its offset, and how honestly it is embedded.</p></div></div>
-        <section class="panel inspector-panel"><div class="inspect-toolbar"><label class="file-picker"><input type="file" id="inspectFile"><span class="upload-glyph tiny"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span><span id="inspectFileName">Choose file to inspect</span></label><button class="secondary-button" id="inspectButton">Inspect file <span>⌕</span></button></div><div id="inspectResult" class="inspect-result" hidden></div></section>
+        <section class="panel inspector-panel"><div class="inspect-toolbar"><label class="file-picker"><input type="file" id="inspectFile"><span class="upload-glyph tiny"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span><span id="inspectFileName">Choose file to inspect</span></label><div class="inspect-actions"><label class="field inspect-key"><span>Bundle key <small>optional</small></span><input type="password" id="inspectKey" autocomplete="off" placeholder="For obfuscated bundles"></label><div class="inspect-buttons"><button class="secondary-button" id="inspectButton">Inspect file <span>⌕</span></button><button class="primary-button" id="verifyButton">Verify integrity <span>✓</span></button></div></div></div><div id="inspectResult" class="inspect-result" hidden></div></section>
       </section>
 
       <section class="view" id="view-formats">
