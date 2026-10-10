@@ -3,7 +3,8 @@
 
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { files: [], formats: [], toastTimer: null };
+  const state = { files: [], formats: [], toastTimer: null, unpackFile: null, inspectFile: null };
+  const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
   const colors = { host: '#a6f4d6', embed: '#8ad6e7', layer: '#b6a6ff', bundle: '#ffd08a', footer: '#ff9bb0', padding: '#56647d', meta: '#7086a1' };
   const byte = (value) => {
     if (value < 1024) return `${value} B`;
@@ -43,7 +44,7 @@
 
   function addFiles(files) {
     const incoming = [...files];
-    if (incoming.some((file) => file.size > 256 * 1024 * 1024)) {
+    if (incoming.some((file) => file.size > MAX_UPLOAD_BYTES)) {
       toast('A file is larger than the 256 MiB request limit.', true);
       return;
     }
@@ -56,6 +57,7 @@
   }
 
   function drawFiles() {
+    $('#makeResult').hidden = true;
     const list = $('#fileList');
     $('#fileCount').textContent = `${state.files.length} FILE${state.files.length === 1 ? '' : 'S'}`;
     $('#statFiles').textContent = String(state.files.length);
@@ -234,7 +236,7 @@
   }
 
   async function unpackContainer() {
-    const file = $('#unpackFile').files[0];
+    const file = state.unpackFile || $('#unpackFile').files[0];
     if (!file) return toast('Choose a container file first.', true);
     const button = $('#unpackButton'); const restore = setBusy(button, 'Reading bundle');
     const form = formForFile(file); if ($('#unpackKey').value) form.append('key', $('#unpackKey').value);
@@ -270,11 +272,14 @@
   }
 
   async function inspectContainer(verify = false) {
-    const file = $('#inspectFile').files[0];
+    const file = state.inspectFile || $('#inspectFile').files[0];
     if (!file) return toast('Choose a file to inspect first.', true);
-    const button = $('#inspectButton'); const restore = setBusy(button, verify ? 'Verifying' : 'Scanning');
+    const button = verify ? $('#verifyButton') : $('#inspectButton');
+    const restore = setBusy(button, verify ? 'Verifying' : 'Scanning');
+    const form = formForFile(file);
+    if (verify && $('#inspectKey').value) form.append('key', $('#inspectKey').value);
     try {
-      const report = await api(verify ? '/api/verify' : '/api/inspect', formForFile(file));
+      const report = await api(verify ? '/api/verify' : '/api/inspect', form);
       if (verify) {
         const target = $('#inspectResult'); target.hidden = false;
         const checks = report.checks || [];
@@ -294,6 +299,20 @@
     zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
     zone.addEventListener('drop', (event) => { event.preventDefault(); zone.classList.remove('dragover'); addFiles(event.dataTransfer.files); });
     $('#payloadFiles').addEventListener('change', (event) => { addFiles(event.target.files); event.target.value = ''; });
+
+    const unpackZone = $('.small-drop');
+    unpackZone.addEventListener('dragover', (event) => { event.preventDefault(); unpackZone.classList.add('dragover'); });
+    unpackZone.addEventListener('dragleave', () => unpackZone.classList.remove('dragover'));
+    unpackZone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      unpackZone.classList.remove('dragover');
+      const file = event.dataTransfer.files[0];
+      if (!file) return;
+      if (file.size > MAX_UPLOAD_BYTES) return toast('This file is larger than the 256 MiB request limit.', true);
+      state.unpackFile = file;
+      $('#unpackFileName').textContent = file.name;
+      $('#unpackResult').hidden = true;
+    });
   }
 
   async function init() {
@@ -303,8 +322,31 @@
     $('#makeButton').addEventListener('click', makePolyglot);
     $('#unpackButton').addEventListener('click', unpackContainer);
     $('#inspectButton').addEventListener('click', () => inspectContainer(false));
-    $('#unpackFile').addEventListener('change', (event) => { $('#unpackFileName').textContent = event.target.files[0]?.name || 'Drop or choose a container'; });
-    $('#inspectFile').addEventListener('change', (event) => { $('#inspectFileName').textContent = event.target.files[0]?.name || 'Choose file to inspect'; });
+    $('#verifyButton').addEventListener('click', () => inspectContainer(true));
+    $('#unpackFile').addEventListener('change', (event) => {
+      const file = event.target.files[0] || null;
+      event.target.value = '';
+      if (file && file.size > MAX_UPLOAD_BYTES) {
+        state.unpackFile = null;
+        $('#unpackFileName').textContent = 'Drop or choose a container';
+        return toast('This file is larger than the 256 MiB request limit.', true);
+      }
+      state.unpackFile = file;
+      $('#unpackFileName').textContent = file?.name || 'Drop or choose a container';
+      $('#unpackResult').hidden = true;
+    });
+    $('#inspectFile').addEventListener('change', (event) => {
+      const file = event.target.files[0] || null;
+      event.target.value = '';
+      if (file && file.size > MAX_UPLOAD_BYTES) {
+        state.inspectFile = null;
+        $('#inspectFileName').textContent = 'Choose file to inspect';
+        return toast('This file is larger than the 256 MiB request limit.', true);
+      }
+      state.inspectFile = file;
+      $('#inspectFileName').textContent = file?.name || 'Choose file to inspect';
+      $('#inspectResult').hidden = true;
+    });
     $('#obfuscateToggle').addEventListener('change', (event) => { $('#keyRow').hidden = !event.target.checked; });
     $('#formatSearch').addEventListener('input', drawCatalog);
     $('#categoryFilter').addEventListener('change', drawCatalog);
