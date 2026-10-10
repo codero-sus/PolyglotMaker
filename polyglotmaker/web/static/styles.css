@@ -291,9 +291,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .how-card p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .how-card code { color: var(--accent); font-size: 10px; }
 .privacy-note { display: flex; align-items: center; gap: 10px; padding: 13px; background: #edf7f0; border: 1px solid #dcefe2; border-radius: 11px; }
-.lock-glyph { display: grid; width: 30px; height: 30px; flex: 0 0 30px; place-items: center; color: var(--accent); font-size: 16px; background: #ddf1e4; border-radius: 8px; }
+.network-glyph { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; color: var(--accent); background: #ddf1e4; border-radius: 9px; }
+.network-glyph svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .privacy-note strong { display: block; color: #2e4b3d; font-size: 11px; font-weight: 700; }
 .privacy-note small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.privacy-note small code { color: var(--accent); font-size: 9px; font-weight: 650; }
 
 .result-panel { margin-top: 18px; padding: 22px; }
 .result-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; }

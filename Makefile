@@ -12,7 +12,7 @@ doctor:
 	$(PYTHON) -m polyglotmaker doctor
 
 serve:
-	$(PYTHON) -m polyglotmaker serve --bind 0.0.0.0 --port 8765
+	$(PYTHON) -m polyglotmaker serve --port 8765
 
 clean:
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
