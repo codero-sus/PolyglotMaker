@@ -55,7 +55,7 @@ polyglot serve [--bind 0.0.0.0] [--port 8765]
 polyglot update [--check | --yes] [--json]
 ```
 
-`polyglot update --check` checks the latest stable GitHub release without installing it. `polyglot update` prompts before installing; non-interactive runs are check-only unless `--yes` is supplied. The updater uses the active Python interpreter's `pip`, and running web servers must be restarted after an update. See [`docs/UPDATING.md`](docs/UPDATING.md).
+`polyglot update --check` checks the latest stable GitHub release without installing it. `polyglot update` prompts before installing; non-interactive runs are check-only unless `--yes` is supplied. Repository-root launchers are also available as `python updater.py`, `./updater.sh`, and `updater.bat`; all accept the same update options. The updater uses the active Python interpreter's `pip`, and running web servers must be restarted after an update. See [`docs/UPDATING.md`](docs/UPDATING.md).
 
 ### Embedding modes
 
