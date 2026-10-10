@@ -22,7 +22,13 @@ from .core.container import (
 from .core.errors import PolyglotError
 from .core.util import flatten, human_size
 from .formats import REGISTRY
-from .update import NoReleaseError, UpdateError, compare_versions, fetch_latest_release, install_release
+from .update import (
+    UpdateError,
+    fetch_latest_snapshot,
+    install_snapshot,
+    is_snapshot_installed,
+    record_installed_snapshot,
+)
 
 
 def _json(data: Any) -> None:
@@ -94,10 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--bind", default="0.0.0.0", help="interface to bind (default 0.0.0.0)")
     p_serve.add_argument("--port", type=int, default=8765)
 
-    p_update = sub.add_parser("update", help="check for and install the latest stable GitHub release")
+    p_update = sub.add_parser("update", help="check for and install the latest source from GitHub")
     update_action = p_update.add_mutually_exclusive_group()
     update_action.add_argument("--check", action="store_true", help="check only; do not install")
     update_action.add_argument("-y", "--yes", action="store_true", help="install without prompting")
+    p_update.add_argument("--branch", help="GitHub branch to update from (default: repository's default branch)")
     p_update.add_argument("--json", action="store_true", help="print machine-readable status")
 
     return parser
@@ -260,41 +267,38 @@ def _do_serve(args: argparse.Namespace) -> int:
 def _do_update(args: argparse.Namespace) -> int:
     current_version = __version__
     try:
-        release = fetch_latest_release()
-        comparison = compare_versions(release.version, current_version)
-    except NoReleaseError as exc:
-        report = {"status": "no_release", "current_version": current_version, "message": str(exc)}
-        if args.json:
-            _json(report)
-        else:
-            print(f"No update available: {exc}")
-        return 0
+        snapshot = fetch_latest_snapshot(args.branch)
+        already_current = is_snapshot_installed(snapshot)
     except UpdateError as exc:
         report = {"status": "error", "current_version": current_version, "error": str(exc)}
         if args.json:
             _json(report)
         else:
-            print(f"polyglot: update check failed: {exc}", file=sys.stderr)
+            print(f"polyglot: GitHub update check failed: {exc}", file=sys.stderr)
         return 2
 
     report = {
-        "status": "update_available" if comparison > 0 else ("up_to_date" if comparison == 0 else "newer_installed"),
+        "status": "up_to_date" if already_current else "update_available",
         "current_version": current_version,
-        **release.to_dict(),
+        **snapshot.to_dict(),
     }
-    if comparison == 0:
-        message = f"PolyglotMaker {current_version} is up to date."
-    elif comparison < 0:
-        message = f"Installed version {current_version} is newer than the latest stable release {release.version}."
+    if already_current:
+        message = (
+            f"PolyglotMaker already contains the latest GitHub commit for {snapshot.branch} "
+            f"({snapshot.commit[:12]})."
+        )
     else:
-        message = f"Update available: PolyglotMaker {current_version} -> {release.version} ({release.url})"
+        message = (
+            f"GitHub update available: {snapshot.branch}@{snapshot.commit[:12]} "
+            f"({snapshot.url})"
+        )
 
-    if comparison <= 0 or args.check or (args.json and not args.yes):
+    if already_current or args.check or (args.json and not args.yes):
         if args.json:
             _json(report)
         else:
             print(message)
-            if comparison > 0:
+            if not already_current:
                 print("Run `polyglot update` to review and install, or `polyglot update --yes` to install directly.")
         return 0
 
@@ -305,7 +309,7 @@ def _do_update(args: argparse.Namespace) -> int:
             return 0
         print(message)
         try:
-            answer = input(f"Install PolyglotMaker {release.version} now? [y/N] ").strip().lower()
+            answer = input(f"Install GitHub commit {snapshot.commit[:12]} now? [y/N] ").strip().lower()
         except EOFError:
             answer = ""
         if answer not in {"y", "yes"}:
@@ -313,19 +317,26 @@ def _do_update(args: argparse.Namespace) -> int:
             return 0
 
     if not args.json:
-        print(f"Installing PolyglotMaker {release.version} from the official GitHub source archive...")
+        print(f"Installing GitHub commit {snapshot.commit[:12]} from branch {snapshot.branch}...")
     try:
-        result = install_release(release, capture_output=args.json)
+        result = install_snapshot(snapshot, capture_output=args.json)
     except OSError as exc:
         report.update({"status": "install_failed", "error": str(exc)})
         if args.json:
             _json(report)
         else:
-            print(f"polyglot: update install failed: {exc}", file=sys.stderr)
+            print(f"polyglot: GitHub update install failed: {exc}", file=sys.stderr)
         return 2
 
     report["status"] = "installed" if result.returncode == 0 else "install_failed"
     report["installer_exit_code"] = result.returncode
+    if result.returncode == 0:
+        try:
+            record_installed_snapshot(snapshot)
+            report["state_recorded"] = True
+        except OSError as exc:
+            report["state_recorded"] = False
+            report["state_warning"] = str(exc)
     if args.json:
         if result.stdout:
             report["installer_stdout"] = result.stdout
@@ -333,9 +344,11 @@ def _do_update(args: argparse.Namespace) -> int:
             report["installer_stderr"] = result.stderr
         _json(report)
     elif result.returncode == 0:
-        print(f"PolyglotMaker {release.version} installed. Restart any running PolyglotMaker process to use it.")
+        print(f"Installed GitHub commit {snapshot.commit[:12]}. Restart any running PolyglotMaker process to use it.")
+        if not report.get("state_recorded", False):
+            print(f"Warning: could not save update state: {report.get('state_warning', 'unknown error')}", file=sys.stderr)
     else:
-        print(f"polyglot: pip could not install the update (exit code {result.returncode}).", file=sys.stderr)
+        print(f"polyglot: pip could not install the GitHub update (exit code {result.returncode}).", file=sys.stderr)
     return result.returncode
 
 

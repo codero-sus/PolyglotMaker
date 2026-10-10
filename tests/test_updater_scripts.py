@@ -1,28 +1,32 @@
 from __future__ import annotations
 
+import io
 import os
 import runpy
 import stat
 import sys
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+from polyglotmaker.update import CheckoutUpdate
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class RootUpdaterScriptTests(unittest.TestCase):
-    def test_python_entry_point_forwards_update_arguments(self):
+    def test_python_entry_point_calls_github_checkout_updater(self):
         script = ROOT / "updater.py"
-        with patch.object(sys, "argv", [str(script), "--check", "--json"]), patch(
-            "polyglotmaker.cli.main", return_value=7
-        ) as cli_main:
+        result = CheckoutUpdate("main", "a" * 40, "b" * 40, False, True)
+        with patch.object(sys, "argv", [str(script), "--branch", "main"]), patch(
+            "polyglotmaker.update.update_repository_checkout", return_value=result
+        ) as updater, redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as raised:
                 runpy.run_path(str(script), run_name="__main__")
 
-        self.assertEqual(raised.exception.code, 7)
-        cli_main.assert_called_once_with(["update", "--check", "--json"])
+        self.assertEqual(raised.exception.code, 0)
+        updater.assert_called_once_with(ROOT, branch="main", check_only=False)
 
     def test_shell_and_batch_launchers_target_python_entry_point(self):
         shell = (ROOT / "updater.sh").read_text(encoding="utf-8")

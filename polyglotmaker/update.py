@@ -1,17 +1,20 @@
-"""Release checking and opt-in self-updates for PolyglotMaker.
+"""Check and install the latest PolyglotMaker source directly from GitHub.
 
-Updates are fetched only from this project's GitHub Releases. Merely checking
-for an update never installs code; installation is always confirmed by the user
-or explicitly requested with ``--yes``.
+The updater follows the repository's default branch (or a user-selected
+branch), pins installation to the commit fetched from GitHub, and records that
+commit locally after a successful install. It does not depend on GitHub
+Releases being published.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -20,115 +23,49 @@ from . import __version__
 from .core.errors import PolyglotError
 
 GITHUB_REPOSITORY = "codero-sus/PolyglotMaker"
-LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
+GITHUB_API = f"https://api.github.com/repos/{GITHUB_REPOSITORY}"
+GITHUB_CLONE_URL = f"https://github.com/{GITHUB_REPOSITORY}.git"
 REQUEST_TIMEOUT_SECONDS = 8
-MAX_RELEASE_RESPONSE_BYTES = 1024 * 1024
+MAX_GITHUB_RESPONSE_BYTES = 1024 * 1024
+_COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 class UpdateError(PolyglotError):
-    """An update check or install could not be completed safely."""
-
-
-class NoReleaseError(UpdateError):
-    """The project has not published a stable GitHub release yet."""
+    """A GitHub update check or install could not be completed safely."""
 
 
 @dataclass(frozen=True)
-class Release:
-    """Metadata for a validated stable release."""
+class GitHubSnapshot:
+    """A commit-pinned snapshot from a GitHub branch."""
 
-    version: str
-    tag: str
+    branch: str
+    commit: str
     url: str
     source_url: str
 
     def to_dict(self) -> dict[str, str]:
         return {
-            "version": self.version,
-            "tag": self.tag,
+            "branch": self.branch,
+            "commit": self.commit,
             "url": self.url,
             "source_url": self.source_url,
         }
 
 
-_VERSION_RE = re.compile(
-    r"^[vV]?(?P<release>\d+(?:\.\d+)*)"
-    r"(?:(?:[-._]?)(?P<pre>alpha|a|beta|b|preview|pre|rc|c)(?:[-._]?(?P<pre_num>\d+))?)?"
-    r"(?:(?:[-._]?)(?P<post>post|rev|r)(?:[-._]?(?P<post_num>\d+))?)?"
-    r"(?:(?:[-._]?)(?P<dev>dev)(?:[-._]?(?P<dev_num>\d+))?)?"
-    r"(?:\+[0-9a-z.-]+)?$",
-    re.IGNORECASE,
-)
-_PRE_RELEASE_ORDER = {
-    "a": 0,
-    "alpha": 0,
-    "b": 1,
-    "beta": 1,
-    "c": 2,
-    "rc": 2,
-    "pre": 2,
-    "preview": 2,
-}
+@dataclass(frozen=True)
+class CheckoutUpdate:
+    """Result of fast-forwarding a local Git checkout from GitHub."""
+
+    branch: str
+    previous_commit: str
+    latest_commit: str
+    update_available: bool
+    updated: bool
 
 
-def _version_key(value: str) -> tuple[object, ...]:
-    """Return an ordering key for common PEP 440 release tags.
-
-    This intentionally supports the numeric, alpha/beta/rc, post, dev, and
-    local-version forms used by Python releases. Unknown tag schemes fail
-    closed instead of accidentally offering a downgrade.
-    """
-
-    match = _VERSION_RE.fullmatch(value.strip())
-    if not match:
-        raise UpdateError(
-            f"cannot compare version {value!r}; use a PEP 440-style release tag such as v1.2.3"
-        )
-
-    release = [int(part) for part in match.group("release").split(".")]
-    while len(release) > 1 and release[-1] == 0:
-        release.pop()
-
-    pre = match.group("pre")
-    dev_num = match.group("dev_num")
-    if pre:
-        pre_key = (_PRE_RELEASE_ORDER[pre.lower()], int(match.group("pre_num") or 0))
-    elif dev_num is not None and not match.group("post"):
-        # A dev-only release sorts before alpha/beta/rc releases.
-        pre_key = (-1, 0)
-    else:
-        # A final release sorts after its prereleases.
-        pre_key = (3, 0)
-
-    post = match.group("post")
-    post_key = (1, int(match.group("post_num") or 0)) if post else (0, 0)
-    dev_key = (0, int(dev_num or 0)) if dev_num is not None else (1, 0)
-    return tuple(release), pre_key, post_key, dev_key
-
-
-def compare_versions(left: str, right: str) -> int:
-    """Compare two supported release versions (1, 0, or -1)."""
-
-    left_key, right_key = _version_key(left), _version_key(right)
-    return (left_key > right_key) - (left_key < right_key)
-
-
-def _version_from_tag(tag: str) -> str:
-    version = tag[1:] if tag[:1].lower() == "v" else tag
-    _version_key(version)  # validate before using the value in any install URL
-    return version
-
-
-def _source_archive_url(tag: str) -> str:
-    encoded_tag = quote(tag, safe="")
-    return f"https://github.com/{GITHUB_REPOSITORY}/archive/refs/tags/{encoded_tag}.zip"
-
-
-def fetch_latest_release() -> Release:
-    """Fetch and validate the latest stable release from GitHub's API."""
-
+def _github_json(url: str) -> object:
     request = Request(
-        LATEST_RELEASE_API,
+        url,
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": f"PolyglotMaker/{__version__}",
@@ -137,45 +74,136 @@ def fetch_latest_release() -> Release:
     )
     try:
         with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            raw = response.read(MAX_RELEASE_RESPONSE_BYTES + 1)
+            raw = response.read(MAX_GITHUB_RESPONSE_BYTES + 1)
     except HTTPError as exc:
         if exc.code == 404:
-            raise NoReleaseError(
-                f"no stable GitHub release has been published for {GITHUB_REPOSITORY} yet"
-            ) from exc
+            raise UpdateError("GitHub could not find the repository or branch requested") from exc
         raise UpdateError(f"GitHub update check failed with HTTP {exc.code}") from exc
     except (URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
         raise UpdateError(f"could not reach GitHub to check for updates: {reason}") from exc
 
-    if len(raw) > MAX_RELEASE_RESPONSE_BYTES:
-        raise UpdateError("GitHub returned an unexpectedly large release response")
+    if len(raw) > MAX_GITHUB_RESPONSE_BYTES:
+        raise UpdateError("GitHub returned an unexpectedly large update response")
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise UpdateError("GitHub returned invalid release metadata") from exc
-    if not isinstance(payload, dict):
-        raise UpdateError("GitHub returned an invalid release record")
+        raise UpdateError("GitHub returned invalid update metadata") from exc
 
-    tag = payload.get("tag_name")
-    if not isinstance(tag, str) or not tag or len(tag) > 128:
-        raise UpdateError("GitHub release is missing a valid tag name")
-    version = _version_from_tag(tag)
-    if payload.get("draft") or payload.get("prerelease"):
-        raise UpdateError("GitHub's latest release endpoint returned a draft or prerelease")
 
-    tag_path = quote(tag, safe="")
-    release_url = f"https://github.com/{GITHUB_REPOSITORY}/releases/tag/{tag_path}"
-    return Release(
-        version=version,
-        tag=tag,
-        url=release_url,
-        source_url=_source_archive_url(tag),
+def fetch_latest_snapshot(branch: str | None = None) -> GitHubSnapshot:
+    """Resolve a branch to its latest commit and return its pinned archive URL."""
+
+    repository = _github_json(GITHUB_API)
+    if not isinstance(repository, dict):
+        raise UpdateError("GitHub returned invalid repository metadata")
+    default_branch = repository.get("default_branch")
+    selected_branch = branch if branch is not None else default_branch
+    if (
+        not isinstance(selected_branch, str)
+        or not selected_branch
+        or len(selected_branch) > 255
+        or any(ord(char) < 32 for char in selected_branch)
+    ):
+        raise UpdateError("GitHub returned an invalid default branch name")
+
+    branch_path = quote(selected_branch, safe="")
+    commit_payload = _github_json(f"{GITHUB_API}/commits/{branch_path}")
+    if not isinstance(commit_payload, dict):
+        raise UpdateError("GitHub returned invalid branch commit metadata")
+    commit = commit_payload.get("sha")
+    if not isinstance(commit, str) or not _COMMIT_RE.fullmatch(commit):
+        raise UpdateError("GitHub returned an invalid commit identifier")
+    commit = commit.lower()
+    return GitHubSnapshot(
+        branch=selected_branch,
+        commit=commit,
+        url=f"https://github.com/{GITHUB_REPOSITORY}/commit/{commit}",
+        source_url=f"https://github.com/{GITHUB_REPOSITORY}/archive/{commit}.zip",
     )
 
 
-def install_release(release: Release, *, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
-    """Install the selected release with the active Python interpreter's pip."""
+def _local_checkout() -> tuple[Path, str] | None:
+    """Return this checkout's HEAD when the package is running from a Git repo."""
+
+    root = Path(__file__).resolve().parents[1]
+    if not (root / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, check=False, capture_output=True, text=True
+        )
+    except OSError:
+        return None
+    commit = result.stdout.strip().lower()
+    if result.returncode != 0 or not _COMMIT_RE.fullmatch(commit):
+        return None
+    return root, commit
+
+
+def _state_path() -> Path:
+    return Path.home() / ".polyglotmaker" / "github-update-state.json"
+
+
+def _python_prefix() -> str:
+    return os.path.normcase(os.path.realpath(sys.prefix))
+
+
+def is_snapshot_installed(snapshot: GitHubSnapshot) -> bool:
+    """Check Git ancestry or the per-user marker written after a GitHub update."""
+
+    checkout = _local_checkout()
+    if checkout:
+        root, local_commit = checkout
+        if local_commit == snapshot.commit:
+            return True
+        # A development checkout may already contain the default-branch commit
+        # while being on a newer feature branch. Avoid offering a downgrade.
+        try:
+            result = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", snapshot.commit, local_commit],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
+
+    try:
+        marker = json.loads(_state_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return (
+        isinstance(marker, dict)
+        and marker.get("repository") == GITHUB_REPOSITORY
+        and marker.get("branch") == snapshot.branch
+        and marker.get("commit") == snapshot.commit
+        and marker.get("python_prefix") == _python_prefix()
+    )
+
+
+def record_installed_snapshot(snapshot: GitHubSnapshot) -> None:
+    """Remember a successfully installed GitHub commit for future checks."""
+
+    path = _state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    payload = {
+        "repository": GITHUB_REPOSITORY,
+        "branch": snapshot.branch,
+        "commit": snapshot.commit,
+        "python_prefix": _python_prefix(),
+    }
+    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def install_snapshot(
+    snapshot: GitHubSnapshot, *, capture_output: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Install a commit-pinned GitHub archive with the active Python's pip."""
 
     command = [
         sys.executable,
@@ -183,8 +211,92 @@ def install_release(release: Release, *, capture_output: bool = False) -> subpro
         "pip",
         "install",
         "--upgrade",
+        "--force-reinstall",
         "--no-input",
         "--disable-pip-version-check",
-        release.source_url,
+        snapshot.source_url,
     ]
     return subprocess.run(command, check=False, capture_output=capture_output, text=True)
+
+
+def _git_result(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), *args], check=False, capture_output=True, text=True
+        )
+    except OSError as exc:
+        raise UpdateError(f"could not run Git: {exc}") from exc
+
+
+def _git_output(root: Path, *args: str) -> str:
+    result = _git_result(root, *args)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown Git error"
+        raise UpdateError(f"Git command failed: {detail}")
+    return result.stdout.strip()
+
+
+def _is_ancestor(root: Path, ancestor: str, descendant: str) -> bool:
+    result = _git_result(root, "merge-base", "--is-ancestor", ancestor, descendant)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = result.stderr.strip() or "commit history is unavailable"
+    raise UpdateError(f"could not compare local and GitHub history: {detail}")
+
+
+def update_repository_checkout(
+    repo_root: str | os.PathLike[str], *, branch: str | None = None, check_only: bool = False
+) -> CheckoutUpdate:
+    """Fetch a GitHub branch and optionally fast-forward this clean checkout.
+
+    The updater never switches branches, overwrites local changes, or performs
+    a merge commit. It refuses dirty or diverged checkouts.
+    """
+
+    root = Path(repo_root).resolve()
+    top_level = Path(_git_output(root, "rev-parse", "--show-toplevel")).resolve()
+    if top_level != root:
+        raise UpdateError(f"run the updater from the repository root ({top_level})")
+
+    status = _git_output(root, "status", "--porcelain", "--untracked-files=all")
+    if status:
+        raise UpdateError("working tree has uncommitted changes; commit or stash them before updating")
+
+    current_branch = _git_output(root, "branch", "--show-current")
+    if not current_branch:
+        raise UpdateError("cannot update a detached HEAD; check out a branch first")
+    target_branch = current_branch if branch is None else branch
+    _git_output(root, "check-ref-format", "--branch", target_branch)
+    fetch = _git_result(
+        root,
+        "fetch",
+        "--no-tags",
+        GITHUB_CLONE_URL,
+        f"refs/heads/{target_branch}",
+    )
+    if fetch.returncode != 0:
+        detail = fetch.stderr.strip() or fetch.stdout.strip() or "unknown Git fetch error"
+        raise UpdateError(f"could not fetch GitHub branch {target_branch!r}: {detail}")
+
+    previous_commit = _git_output(root, "rev-parse", "--verify", "HEAD^{commit}").lower()
+    latest_commit = _git_output(root, "rev-parse", "--verify", "FETCH_HEAD^{commit}").lower()
+    if not _COMMIT_RE.fullmatch(previous_commit) or not _COMMIT_RE.fullmatch(latest_commit):
+        raise UpdateError("Git returned an invalid commit identifier")
+
+    if previous_commit == latest_commit or _is_ancestor(root, latest_commit, previous_commit):
+        return CheckoutUpdate(target_branch, previous_commit, latest_commit, False, False)
+    if not _is_ancestor(root, previous_commit, latest_commit):
+        raise UpdateError(
+            "local and GitHub histories have diverged; update manually after reviewing the changes"
+        )
+    if check_only:
+        return CheckoutUpdate(target_branch, previous_commit, latest_commit, True, False)
+
+    merge = _git_result(root, "merge", "--ff-only", "FETCH_HEAD")
+    if merge.returncode != 0:
+        detail = merge.stderr.strip() or merge.stdout.strip() or "unknown Git merge error"
+        raise UpdateError(f"could not fast-forward from GitHub: {detail}")
+    final_commit = _git_output(root, "rev-parse", "--verify", "HEAD^{commit}").lower()
+    return CheckoutUpdate(target_branch, previous_commit, final_commit, False, final_commit != previous_commit)
