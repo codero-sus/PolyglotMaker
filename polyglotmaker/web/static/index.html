@@ -18,10 +18,10 @@
       </a>
       <div class="rail-caption">WORKSPACE</div>
       <nav class="side-nav" aria-label="Main navigation">
-        <button class="nav-item active" data-view="make" aria-label="Create" title="Create"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>Create</span><kbd>01</kbd></button>
-        <button class="nav-item" data-view="unpack" aria-label="Unpack" title="Unpack"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span><span>Unpack</span><kbd>02</kbd></button>
-        <button class="nav-item" data-view="inspect" aria-label="Inspect" title="Inspect"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><span>Inspect</span><kbd>03</kbd></button>
-        <button class="nav-item" data-view="formats" aria-label="Formats" title="Formats"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg></span><span>Formats</span><kbd>04</kbd></button>
+        <button class="nav-item active" data-view="make" aria-label="Create" title="Create" aria-pressed="true"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span>Create</span><kbd>01</kbd></button>
+        <button class="nav-item" data-view="unpack" aria-label="Unpack" title="Unpack" aria-pressed="false"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v3h16v-3"/></svg></span><span>Unpack</span><kbd>02</kbd></button>
+        <button class="nav-item" data-view="inspect" aria-label="Inspect" title="Inspect" aria-pressed="false"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg></span><span>Inspect</span><kbd>03</kbd></button>
+        <button class="nav-item" data-view="formats" aria-label="Formats" title="Formats" aria-pressed="false"><span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg></span><span>Formats</span><kbd>04</kbd></button>
       </nav>
       <div class="rail-spacer"></div>
       <div class="rail-status"><span class="status-dot"></span><span>LOCAL ENGINE READY</span></div>
@@ -44,7 +44,7 @@
         <div class="workspace-grid">
           <div class="column-main">
             <section class="panel input-panel">
-              <div class="panel-head"><div><span class="step-number">01</span><div><h2>Add your files</h2><p>Any type, any mix. Files are stored losslessly.</p></div></div><span class="count-pill" id="fileCount">0 FILES</span></div>
+              <div class="panel-head"><div><span class="step-number">01</span><div><h2>Add your files</h2><p>Any type, any mix. Files are stored losslessly.</p></div></div><div class="file-heading-actions"><span class="count-pill" id="fileCount">0 FILES</span><button class="clear-files" id="clearFilesButton" type="button" hidden>Clear all</button></div></div>
               <label class="drop-zone" id="dropZone" for="payloadFiles">
                 <input id="payloadFiles" type="file" multiple>
                 <span class="upload-glyph"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span>
@@ -72,7 +72,7 @@
           </div>
 
           <aside class="column-side">
-            <section class="side-card host-card"><div class="side-card-label">HOST SNAPSHOT <span class="spark">✦</span></div><div class="host-preview" id="hostPreview"><div class="preview-surface"><div class="preview-stack"><i></i><i></i><i></i><span>?</span></div></div><div class="preview-meta"><strong id="previewFormat">Auto-selected</strong><span id="previewExtension">Waiting for files</span></div></div><div class="side-divider"></div><div class="stat-line"><span>Payload files</span><b id="statFiles">0</b></div><div class="stat-line"><span>File types</span><b id="statTypes">0</b></div><div class="stat-line"><span>Runtime deps</span><b>None</b></div></section>
+            <section class="side-card host-card"><div class="side-card-label">HOST SNAPSHOT <span class="spark">✦</span></div><div class="host-preview" id="hostPreview"><div class="preview-surface"><div class="preview-stack"><i></i><i></i><i></i><span>?</span></div></div><div class="preview-meta"><strong id="previewFormat">Auto-selected</strong><span id="previewExtension">Waiting for files</span></div></div><div class="side-divider"></div><div class="stat-line"><span>Payload files</span><b id="statFiles">0</b></div><div class="stat-line"><span>File types</span><b id="statTypes">0</b></div><div class="stat-line"><span>Total payload size</span><b id="statSize">0 B</b></div><div class="stat-line"><span>External services</span><b>None</b></div></section>
             <section class="side-card how-card"><div class="side-card-label">HOW IT WORKS</div><ol><li><span>1</span><div><strong>Host stays native</strong><p>Spec-legal slots where the format has them.</p></div></li><li><span>2</span><div><strong>Payloads stay exact</strong><p>SHA-256 checked; names and timestamps retained.</p></div></li><li><span>3</span><div><strong>Unpack on demand</strong><p>Use the app or <code>polyglot unpack</code>.</p></div></li></ol></section>
             <div class="privacy-note"><span class="lock-glyph">⌑</span><span><strong>Private by design</strong><small>Runs locally in this workspace. No third-party API calls.</small></span></div>
           </aside>
@@ -96,7 +96,7 @@
 
       <section class="view" id="view-formats">
         <div class="page-heading compact"><div><div class="eyebrow">FORMAT CATALOG</div><h1>Bring <em>anything.</em></h1><p>63 host generators, plus support for arbitrary payload bytes of any type.</p></div><div class="catalog-count"><b id="formatCount">63</b><span>HOST FORMATS</span></div></div>
-        <div class="catalog-controls"><input id="formatSearch" type="search" placeholder="Search formats, extensions, categories…"><select id="categoryFilter"><option value="">All categories</option></select></div><div class="format-grid" id="formatGrid"></div>
+        <div class="catalog-controls"><input id="formatSearch" type="search" aria-label="Search formats" placeholder="Search formats, extensions, categories…"><select id="categoryFilter" aria-label="Filter formats by category"><option value="">All categories</option></select></div><div class="format-grid" id="formatGrid"></div>
       </section>
 
       <footer class="site-footer" id="safety"><div><span class="footer-mark">✳</span><span><strong>Responsible use</strong><small>For legitimate distribution, research, steganography demonstrations, and CTFs. This is not an AV-evasion tool.</small></span></div><span class="footer-right">POLYGLOTMAKER <i>·</i> 0.1.0</span></footer>
