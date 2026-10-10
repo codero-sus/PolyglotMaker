@@ -160,7 +160,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .step-number { display: grid; width: 29px; height: 29px; flex: 0 0 29px; place-items: center; color: var(--accent); font-size: 11px; font-weight: 800; background: var(--accent-soft); border: 1px solid #d2ecdd; border-radius: 8px; }
 .panel-head h2 { margin: 1px 0 4px; color: var(--ink-strong); font-size: 16px; font-weight: 680; letter-spacing: -.25px; }
 .panel-head p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.file-heading-actions { display: flex; align-items: center; gap: 7px; }
 .count-pill, .auto-badge { margin-top: 3px; padding: 6px 9px; color: #718179; font-size: 9px; font-weight: 800; letter-spacing: .65px; white-space: nowrap; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 7px; }
+.clear-files { padding: 5px 7px; color: var(--muted); font-size: 10px; font-weight: 650; background: transparent; border: 0; border-radius: 6px; }
+.clear-files:hover { color: #9f3d4d; background: #fff0f1; }
 .auto-badge { color: var(--accent); background: #eff9f3; border-color: #d9eee2; }
 .auto-badge i { display: inline-block; width: 6px; height: 6px; margin-right: 5px; vertical-align: 1px; background: #42ad78; border-radius: 50%; }
 

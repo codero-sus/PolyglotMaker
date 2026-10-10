@@ -35,7 +35,11 @@
   }
 
   function switchView(view) {
-    $$('.nav-item').forEach((button) => button.classList.toggle('active', button.dataset.view === view));
+    $$('.nav-item').forEach((button) => {
+      const active = button.dataset.view === view;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
     $$('.view').forEach((section) => section.classList.toggle('active', section.id === `view-${view}`));
     const labels = { make: 'Create', unpack: 'Unpack', inspect: 'Inspect', formats: 'Formats' };
     $('#crumbCurrent').textContent = labels[view] || 'Create';
@@ -62,6 +66,8 @@
     $('#fileCount').textContent = `${state.files.length} FILE${state.files.length === 1 ? '' : 'S'}`;
     $('#statFiles').textContent = String(state.files.length);
     $('#statTypes').textContent = String(new Set(state.files.map((file) => extOf(file.name))).size);
+    $('#statSize').textContent = byte(state.files.reduce((total, file) => total + file.size, 0));
+    $('#clearFilesButton').hidden = state.files.length === 0;
     if (!state.files.length) {
       list.innerHTML = '<div class="empty-files">Your selected files will appear here.</div>';
       updateHostPreview();
@@ -319,6 +325,11 @@
     $$('.nav-item').forEach((button) => button.addEventListener('click', () => switchView(button.dataset.view)));
     bindDropZone();
     $('#hostSelect').addEventListener('change', updateHostPreview);
+    $('#clearFilesButton').addEventListener('click', () => {
+      state.files = [];
+      $('#payloadFiles').value = '';
+      drawFiles();
+    });
     $('#makeButton').addEventListener('click', makePolyglot);
     $('#unpackButton').addEventListener('click', unpackContainer);
     $('#inspectButton').addEventListener('click', () => inspectContainer(false));
