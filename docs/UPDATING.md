@@ -16,6 +16,16 @@ polyglot update --yes
 polyglot update --json
 ```
 
+Repository-root launchers are also provided for environments where invoking the installed CLI is inconvenient:
+
+```sh
+python updater.py --check       # cross-platform Python entry point
+./updater.sh --check            # macOS/Linux shell launcher
+updater.bat --check             # Windows command prompt launcher
+```
+
+The launchers forward all arguments to `polyglot update`; use `--yes` to explicitly install from automation.
+
 A non-interactive `polyglot update` only reports the available update; it never installs unless `--yes` is explicitly passed. `--check` and `--yes` are mutually exclusive. The command uses HTTPS to query the fixed repository `codero-sus/PolyglotMaker`; it does not run a web endpoint or automatically update the browser server. Restart running PolyglotMaker processes after installing.
 
 ## Release requirements
