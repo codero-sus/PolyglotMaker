@@ -44,12 +44,6 @@
     return output;
   }
 
-  function u32(value) {
-    const output = new Uint8Array(4);
-    new DataView(output.buffer).setUint32(0, value >>> 0, true);
-    return output;
-  }
-
   function u64(value) {
     const output = new Uint8Array(8);
     new DataView(output.buffer).setBigUint64(0, BigInt(value), true);
@@ -118,12 +112,48 @@
     return { date: dateBits, time: timeBits };
   }
 
-  function buildStoredZip(entries) {
-    if (entries.length > MAX_FILES + 1) throw new Error('This bundle has too many files for the browser-only edition.');
-    const localParts = [];
-    const centralParts = [];
+  function reportProgress(callback, percent, label) {
+    if (typeof callback !== 'function') return;
+    callback({ percent: Math.max(0, Math.min(100, Math.round(Number(percent) || 0))), label });
+  }
+
+  function throwIfAborted(signal) {
+    if (!signal?.aborted) return;
+    const error = new Error('Operation cancelled.');
+    error.name = 'AbortError';
+    throw error;
+  }
+
+  function yieldToBrowser() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  async function crc32Chunked(data, onProgress, signal) {
+    let crc = 0xffffffff;
+    const chunkSize = 2 * 1024 * 1024;
+    if (!data.length) {
+      onProgress?.(0, 0);
+      return 0;
+    }
+    for (let start = 0; start < data.length; start += chunkSize) {
+      throwIfAborted(signal);
+      const end = Math.min(data.length, start + chunkSize);
+      for (let i = start; i < end; i += 1) crc = crcTable[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+      onProgress?.(end, data.length);
+      if (end < data.length) await yieldToBrowser();
+    }
+    throwIfAborted(signal);
+    return (crc ^ 0xffffffff) >>> 0;
+  }
+
+  function prepareStoredZip(entries) {
+    if (!Array.isArray(entries) || entries.length > MAX_FILES + 1) {
+      throw new Error('This bundle has too many files for the browser-only edition.');
+    }
+    const prepared = [];
     const names = new Set();
-    let localOffset = 0;
+    let localSize = 0;
+    let centralSize = 0;
 
     for (const entry of entries) {
       const name = safeMemberName(entry.name);
@@ -132,85 +162,209 @@
       const nameBytes = encoder.encode(name);
       const data = entry.data instanceof Uint8Array ? entry.data : new Uint8Array(entry.data);
       if (nameBytes.length > 65535 || data.length > 0xffffffff) throw new Error(`File is too large for a browser ZIP: ${name}`);
-      const checksum = crc32(data);
-      const stamp = dosDateTime(entry.mtime);
-      const flag = 0x0800; // UTF-8 filename
-
-      const localHeader = new Uint8Array(30);
-      const localView = new DataView(localHeader.buffer);
-      localView.setUint32(0, 0x04034b50, true);
-      localView.setUint16(4, 20, true);
-      localView.setUint16(6, flag, true);
-      localView.setUint16(8, 0, true); // stored, no compression
-      localView.setUint16(10, stamp.time, true);
-      localView.setUint16(12, stamp.date, true);
-      localView.setUint32(14, checksum, true);
-      localView.setUint32(18, data.length, true);
-      localView.setUint32(22, data.length, true);
-      localView.setUint16(26, nameBytes.length, true);
-      localView.setUint16(28, 0, true);
-      localParts.push(localHeader, nameBytes, data);
-
-      const centralHeader = new Uint8Array(46);
-      const centralView = new DataView(centralHeader.buffer);
-      centralView.setUint32(0, 0x02014b50, true);
-      centralView.setUint16(4, 0x0314, true); // Unix creator, ZIP 2.0
-      centralView.setUint16(6, 20, true);
-      centralView.setUint16(8, flag, true);
-      centralView.setUint16(10, 0, true);
-      centralView.setUint16(12, stamp.time, true);
-      centralView.setUint16(14, stamp.date, true);
-      centralView.setUint32(16, checksum, true);
-      centralView.setUint32(20, data.length, true);
-      centralView.setUint32(24, data.length, true);
-      centralView.setUint16(28, nameBytes.length, true);
-      centralView.setUint16(30, 0, true);
-      centralView.setUint16(32, 0, true);
-      centralView.setUint16(34, 0, true);
-      centralView.setUint16(36, 0, true);
-      centralView.setUint32(38, ((Number(entry.mode) || 0o644) & 0xffff) << 16, true);
-      centralView.setUint32(42, localOffset, true);
-      centralParts.push(centralHeader, nameBytes);
-      localOffset += localHeader.length + nameBytes.length + data.length;
+      const localOffset = localSize;
+      localSize += 30 + nameBytes.length + data.length;
+      centralSize += 46 + nameBytes.length;
+      if (!Number.isSafeInteger(localSize) || localSize > 0xffffffff || centralSize > 0xffffffff) {
+        throw new Error('This archive exceeds the ZIP32 limits supported by the browser-only edition.');
+      }
+      prepared.push({
+        name,
+        nameBytes,
+        data,
+        localOffset,
+        checksum: 0,
+        stamp: dosDateTime(entry.mtime),
+        mode: Number(entry.mode) || 0o644,
+      });
     }
 
-    const localData = concat(localParts);
-    const centralData = concat(centralParts);
-    if (entries.length > 65535 || centralData.length > 0xffffffff || localData.length > 0xffffffff) {
+    const eocdOffset = localSize + centralSize;
+    const totalSize = eocdOffset + 22;
+    if (entries.length > 65535 || totalSize > 0xffffffff) {
       throw new Error('This archive exceeds the ZIP32 limits supported by the browser-only edition.');
     }
-    const endRecord = new Uint8Array(22);
-    const endView = new DataView(endRecord.buffer);
-    endView.setUint32(0, 0x06054b50, true);
-    endView.setUint16(4, 0, true);
-    endView.setUint16(6, 0, true);
-    endView.setUint16(8, entries.length, true);
-    endView.setUint16(10, entries.length, true);
-    endView.setUint32(12, centralData.length, true);
-    endView.setUint32(16, localData.length, true);
-    endView.setUint16(20, 0, true);
-    const eocdOffset = localData.length + centralData.length;
-    return { bytes: concat([localData, centralData, endRecord]), eocdOffset };
+    return { entries: prepared, localSize, centralSize, eocdOffset, totalSize };
   }
 
-  async function buildPolyglotZip(entries, absoluteOffset, manifestBytes) {
-    const draft = buildStoredZip(entries);
-    const archiveHash = await sha256(draft.bytes);
-    const manifestHash = await sha256(manifestBytes);
+  async function checksumZipEntries(layout, { signal, onProgress } = {}) {
+    const total = layout.entries.reduce((sum, entry) => sum + entry.data.length, 0);
+    let processed = 0;
+    for (let index = 0; index < layout.entries.length; index += 1) {
+      throwIfAborted(signal);
+      const entry = layout.entries[index];
+      entry.checksum = await crc32Chunked(entry.data, (current) => {
+        onProgress?.(total ? (processed + current) / total * 100 : 100, entry.name);
+      }, signal);
+      processed += entry.data.length;
+      onProgress?.(total ? processed / total * 100 : 100, entry.name);
+      if ((index + 1) % 64 === 0 && index + 1 < layout.entries.length) await yieldToBrowser();
+    }
+  }
+
+  async function copyBytesChunked(target, source, targetOffset, { signal, onProgress } = {}) {
+    const chunkSize = 2 * 1024 * 1024;
+    if (!source.length) {
+      onProgress?.(100);
+      return;
+    }
+    for (let start = 0; start < source.length; start += chunkSize) {
+      throwIfAborted(signal);
+      const end = Math.min(source.length, start + chunkSize);
+      target.set(source.subarray(start, end), targetOffset + start);
+      onProgress?.(end / source.length * 100);
+      if (end < source.length) await yieldToBrowser();
+    }
+    throwIfAborted(signal);
+  }
+
+  async function writeStoredZip(target, baseOffset, layout, { signal, onProgress } = {}) {
+    const view = new DataView(target.buffer, target.byteOffset, target.byteLength);
+    let cursor = baseOffset;
+    let localCompleted = 0;
+    let centralWritten = 0;
+    const yieldEvery = 64;
+
+    for (let index = 0; index < layout.entries.length; index += 1) {
+      throwIfAborted(signal);
+      const entry = layout.entries[index];
+      const nameLength = entry.nameBytes.length;
+      const dataLength = entry.data.length;
+      const stamp = entry.stamp;
+      const flag = 0x0800; // UTF-8 filename
+      view.setUint32(cursor, 0x04034b50, true);
+      view.setUint16(cursor + 4, 20, true);
+      view.setUint16(cursor + 6, flag, true);
+      view.setUint16(cursor + 8, 0, true); // stored, no compression
+      view.setUint16(cursor + 10, stamp.time, true);
+      view.setUint16(cursor + 12, stamp.date, true);
+      view.setUint32(cursor + 14, entry.checksum, true);
+      view.setUint32(cursor + 18, dataLength, true);
+      view.setUint32(cursor + 22, dataLength, true);
+      view.setUint16(cursor + 26, nameLength, true);
+      view.setUint16(cursor + 28, 0, true);
+      target.set(entry.nameBytes, cursor + 30);
+      const dataOffset = cursor + 30 + nameLength;
+      localCompleted += 30 + nameLength;
+      for (let start = 0; start < dataLength; start += 2 * 1024 * 1024) {
+        throwIfAborted(signal);
+        const end = Math.min(dataLength, start + 2 * 1024 * 1024);
+        target.set(entry.data.subarray(start, end), dataOffset + start);
+        const percent = layout.localSize ? (localCompleted + end) / layout.localSize * 85 : 85;
+        onProgress?.(percent, `Writing ${entry.name}…`);
+        if (end < dataLength) await yieldToBrowser();
+      }
+      localCompleted += dataLength;
+      onProgress?.(layout.localSize ? localCompleted / layout.localSize * 85 : 85, `Wrote ${entry.name}`);
+      cursor += 30 + nameLength + dataLength;
+      if ((index + 1) % yieldEvery === 0 && index + 1 < layout.entries.length) await yieldToBrowser();
+    }
+    if (cursor !== baseOffset + layout.localSize) throw new Error('ZIP local data size mismatch.');
+
+    for (let index = 0; index < layout.entries.length; index += 1) {
+      throwIfAborted(signal);
+      const entry = layout.entries[index];
+      const nameLength = entry.nameBytes.length;
+      const stamp = entry.stamp;
+      const flag = 0x0800;
+      view.setUint32(cursor, 0x02014b50, true);
+      view.setUint16(cursor + 4, 0x0314, true); // Unix creator, ZIP 2.0
+      view.setUint16(cursor + 6, 20, true);
+      view.setUint16(cursor + 8, flag, true);
+      view.setUint16(cursor + 10, 0, true);
+      view.setUint16(cursor + 12, stamp.time, true);
+      view.setUint16(cursor + 14, stamp.date, true);
+      view.setUint32(cursor + 16, entry.checksum, true);
+      view.setUint32(cursor + 20, entry.data.length, true);
+      view.setUint32(cursor + 24, entry.data.length, true);
+      view.setUint16(cursor + 28, nameLength, true);
+      view.setUint16(cursor + 30, 0, true);
+      view.setUint16(cursor + 32, 0, true);
+      view.setUint16(cursor + 34, 0, true);
+      view.setUint16(cursor + 36, 0, true);
+      view.setUint32(cursor + 38, (entry.mode & 0xffff) << 16, true);
+      view.setUint32(cursor + 42, entry.localOffset, true);
+      target.set(entry.nameBytes, cursor + 46);
+      cursor += 46 + nameLength;
+      centralWritten += 46 + nameLength;
+      const percent = layout.centralSize ? 85 + centralWritten / layout.centralSize * 15 : 100;
+      onProgress?.(percent, 'Writing ZIP directory…');
+      if ((index + 1) % yieldEvery === 0 && index + 1 < layout.entries.length) await yieldToBrowser();
+    }
+    if (cursor !== baseOffset + layout.eocdOffset) throw new Error('ZIP central directory size mismatch.');
+
+    throwIfAborted(signal);
+    const eocd = cursor;
+    view.setUint32(eocd, 0x06054b50, true);
+    view.setUint16(eocd + 4, 0, true);
+    view.setUint16(eocd + 6, 0, true);
+    view.setUint16(eocd + 8, layout.entries.length, true);
+    view.setUint16(eocd + 10, layout.entries.length, true);
+    view.setUint32(eocd + 12, layout.centralSize, true);
+    view.setUint32(eocd + 16, layout.localSize, true);
+    view.setUint16(eocd + 20, 0, true);
+    onProgress?.(100, 'ZIP records written.');
+    return eocd;
+  }
+
+  async function buildStoredZip(entries, { signal, onProgress } = {}) {
+    const layout = prepareStoredZip(entries);
+    if (layout.totalSize > MAX_BYTES) throw new Error(`The ZIP download exceeds the ${Math.round(MAX_BYTES / 1024 / 1024)} MiB browser limit.`);
+    await checksumZipEntries(layout, {
+      signal,
+      onProgress: (percent, name) => onProgress?.(percent * 0.65, `Checking ${name}…`),
+    });
+    throwIfAborted(signal);
+    const bytes = new Uint8Array(layout.totalSize);
+    const eocdOffset = await writeStoredZip(bytes, 0, layout, {
+      signal,
+      onProgress: (percent, label) => onProgress?.(65 + percent * 0.35, label),
+    });
+    return { bytes, eocdOffset };
+  }
+
+  async function buildPolyglotZip(entries, hostBytes, manifestBytes, { signal, onProgress } = {}) {
+    const layout = prepareStoredZip(entries);
+    reportProgress(onProgress, 0, 'Preparing ZIP records…');
+    await checksumZipEntries(layout, {
+      signal,
+      onProgress: (percent, name) => reportProgress(onProgress, percent * 0.62, `Checking ZIP data for ${name}…`),
+    });
+    throwIfAborted(signal);
+
     const commentPrefix = encoder.encode('PolyglotMaker v1\u0000');
-    const finalLength = draft.bytes.length + commentPrefix.length + BOOTSTRAP_LENGTH;
+    const commentLength = commentPrefix.length + BOOTSTRAP_LENGTH;
+    const zipLength = layout.totalSize + commentLength;
+    if (hostBytes.length + zipLength > MAX_BYTES) {
+      throw new Error(`The completed container exceeds the ${Math.round(MAX_BYTES / 1024 / 1024)} MiB browser limit, including ZIP overhead.`);
+    }
+    const result = new Uint8Array(hostBytes.length + zipLength);
+    await copyBytesChunked(result, hostBytes, 0, {
+      signal,
+      onProgress: (percent) => reportProgress(onProgress, 62 + percent * 0.05, 'Copying host bytes…'),
+    });
+    const eocdOffset = await writeStoredZip(result, hostBytes.length, layout, {
+      signal,
+      onProgress: (percent, label) => reportProgress(onProgress, 67 + percent * 0.11, label),
+    });
+
+    reportProgress(onProgress, 78, 'Hashing ZIP archive…');
+    const archiveHash = await sha256(result.subarray(hostBytes.length, hostBytes.length + layout.totalSize));
+    throwIfAborted(signal);
+    const manifestHash = await sha256(manifestBytes);
+    throwIfAborted(signal);
     const fields = concat([
-      new Uint8Array([1]), u64(absoluteOffset), u64(finalLength),
+      new Uint8Array([1]), u64(hostBytes.length), u64(zipLength),
       manifestHash, archiveHash, u16(0),
     ]);
     const footer = encoder.encode(`${BOOTSTRAP_MAGIC}${toHex(fields)}`);
     const comment = concat([commentPrefix, footer]);
     if (comment.length > 65535) throw new Error('The ZIP bootstrap comment exceeds the format limit.');
-    const result = new Uint8Array(draft.bytes.length + comment.length);
-    result.set(draft.bytes);
-    new DataView(result.buffer).setUint16(draft.eocdOffset + 20, comment.length, true);
-    result.set(comment, draft.bytes.length);
-    return result;
+    const view = new DataView(result.buffer, result.byteOffset, result.byteLength);
+    view.setUint16(eocdOffset + 20, comment.length, true);
+    result.set(comment, hostBytes.length + layout.totalSize);
+    reportProgress(onProgress, 100, 'Integrity footer ready.');
+    return { bytes: result, length: zipLength };
   }
 
   function pngShell() {
@@ -251,12 +405,14 @@
     return candidate;
   }
 
-  async function readInput(file) {
-    const content = file.data instanceof Uint8Array
-      ? file.data
-      : (file.data instanceof ArrayBuffer ? new Uint8Array(file.data) : new Uint8Array(await file.arrayBuffer()));
+  async function readInput(file, dataOverride = null) {
+    const content = dataOverride instanceof Uint8Array
+      ? dataOverride
+      : (file.data instanceof Uint8Array
+        ? file.data
+        : (file.data instanceof ArrayBuffer ? new Uint8Array(file.data) : new Uint8Array(await file.arrayBuffer())));
     return {
-      name: safeMemberName(file.name || 'payload.bin'),
+      name: safeMemberName(file.webkitRelativePath || file.name || 'payload.bin'),
       data: content,
       mtime: Math.max(315532800, Number(file.lastModified || file.mtime * 1000 || Date.now()) / 1000),
       mode: Number(file.mode) || 0o644,
@@ -265,8 +421,12 @@
     };
   }
 
-  async function createPolyglot({ payloads = [], hostFile = null, includeHost = true } = {}) {
+  async function createPolyglot({ payloads = [], hostFile = null, includeHost = true, onProgress, signal } = {}) {
+    throwIfAborted(signal);
+    reportProgress(onProgress, 1, hostFile ? 'Reading custom host…' : 'Preparing built-in PNG shell…');
     const hostBytes = hostFile ? new Uint8Array(await hostFile.arrayBuffer()) : pngShell();
+    throwIfAborted(signal);
+    reportProgress(onProgress, 3, 'Preparing payload list…');
     const seen = new Set();
     const inputs = [];
     if (hostFile && includeHost) inputs.push({ file: hostFile, role: 'host' });
@@ -277,18 +437,30 @@
     if (hostAndPayloadSize > MAX_BYTES) throw new Error(`Selected data exceeds the ${Math.round(MAX_BYTES / 1024 / 1024)} MiB browser limit.`);
 
     const files = [];
-    for (const input of inputs) {
-      const file = await readInput(input.file);
+    for (let index = 0; index < inputs.length; index += 1) {
+      throwIfAborted(signal);
+      const input = inputs[index];
+      const file = await readInput(input.file, input.role === 'host' && input.file === hostFile ? hostBytes : null);
       file.name = uniqueName(file.name, seen);
       file.role = input.role;
       files.push(file);
+      reportProgress(onProgress, 4 + (index + 1) / inputs.length * 10, `Reading ${file.name}…`);
+      if ((index + 1) % 64 === 0 && index + 1 < inputs.length) await yieldToBrowser();
     }
+
     const records = [];
-    for (const file of files) {
+    const totalPayloadBytes = files.reduce((sum, file) => sum + file.data.length, 0);
+    let hashedBytes = 0;
+    for (let index = 0; index < files.length; index += 1) {
+      throwIfAborted(signal);
+      const file = files[index];
+      reportProgress(onProgress, 15 + (totalPayloadBytes ? hashedBytes / totalPayloadBytes : index / files.length) * 34, `Checking ${file.name}…`);
+      const digest = await sha256Hex(file.data);
+      throwIfAborted(signal);
       records.push({
         name: file.name,
         size: file.data.length,
-        sha256: await sha256Hex(file.data),
+        sha256: digest,
         mtime: file.mtime,
         mode: file.mode,
         mime: file.mime,
@@ -296,7 +468,13 @@
         store: 'zip',
         entry: `${PAYLOAD_PREFIX}${file.name}`,
       });
+      hashedBytes += file.data.length;
+      const ratio = totalPayloadBytes ? hashedBytes / totalPayloadBytes : (index + 1) / files.length;
+      reportProgress(onProgress, 15 + ratio * 34, `Checked ${file.name}`);
     }
+
+    throwIfAborted(signal);
+    reportProgress(onProgress, 50, 'Writing bundle manifest…');
     const fileSet = records.map(({ name, size, sha256: digest }) => ({ name, size, sha256: digest }));
     const bundleHash = await sha256Hex(encoder.encode(canonicalJson(fileSet)));
     const hostName = hostFile ? hostFile.name : 'web-only.png';
@@ -325,10 +503,14 @@
     const manifestBytes = encoder.encode(canonicalJson(manifest));
     const zipEntries = [{ name: MANIFEST_PATH, data: manifestBytes, mtime: Date.now() / 1000, mode: 0o644 }];
     for (const file of files) zipEntries.push({ name: `${PAYLOAD_PREFIX}${file.name}`, data: file.data, mtime: file.mtime, mode: file.mode });
-    const bundle = await buildPolyglotZip(zipEntries, hostBytes.length, manifestBytes);
-    const bytes = concat([hostBytes, bundle]);
+    const bundle = await buildPolyglotZip(zipEntries, hostBytes, manifestBytes, {
+      signal,
+      onProgress: (progress) => reportProgress(onProgress, 52 + progress.percent * 0.45, progress.label),
+    });
+    const bytes = bundle.bytes;
     const hostExt = hostFile ? extensionOf(hostFile.name) : 'png';
     const fileName = `polyglotmaker${hostExt ? `.${hostExt}` : '.polyglot'}`;
+    reportProgress(onProgress, 100, 'Bundle ready to download.');
     return {
       bytes,
       fileName,
@@ -420,45 +602,64 @@
     return entries;
   }
 
-  async function inflateRaw(data, limit) {
+  async function inflateRaw(data, expectedSize, signal, onProgress) {
     if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot inflate DEFLATE ZIP entries. Try a current version of Chrome, Edge, Firefox, or Safari.');
     let decompressor;
     try { decompressor = new DecompressionStream('deflate-raw'); }
     catch { throw new Error('This browser does not support raw DEFLATE ZIP entries. Try a current browser.'); }
+    const output = new Uint8Array(expectedSize);
     const reader = new Blob([data]).stream().pipeThrough(decompressor).getReader();
-    const chunks = [];
     let length = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      length += value.byteLength;
-      if (length > limit || length > MAX_BYTES) {
-        await reader.cancel();
-        throw new Error('A ZIP entry exceeds the browser-only extraction size limit.');
+    try {
+      while (true) {
+        throwIfAborted(signal);
+        const { done, value } = await reader.read();
+        if (done) break;
+        const nextLength = length + value.byteLength;
+        if (nextLength > expectedSize || nextLength > MAX_BYTES) {
+          await reader.cancel();
+          throw new Error('A ZIP entry exceeds its declared size or the browser-only extraction limit.');
+        }
+        output.set(value, length);
+        length = nextLength;
+        onProgress?.(length, expectedSize, 'inflate');
       }
-      chunks.push(value);
+      if (length !== expectedSize) throw new Error('The inflated ZIP entry does not match its declared size.');
+      throwIfAborted(signal);
+      return output;
+    } catch (error) {
+      try { await reader.cancel(); } catch { /* The stream may already be closed. */ }
+      throw error;
     }
-    return concat(chunks);
   }
 
-  async function extractEntry(data, archive, entry, limit) {
-    if (entry.flags & 1) throw new Error('Encrypted ZIP members are not supported in the offline edition.');
+  async function extractEntry(data, archive, entry, limit, { signal, onProgress } = {}) {
+    throwIfAborted(signal);
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const local = archive.start + entry.localOffset;
-    if (local + 30 > archive.end || readU32(view, local) !== 0x04034b50) throw new Error(`Missing local ZIP record for ${entry.name}.`);
+    const centralStart = archive.start + archive.cdOffset;
+    if (local + 30 > centralStart || readU32(view, local) !== 0x04034b50) throw new Error(`Missing local ZIP record for ${entry.name}.`);
+    const localFlags = readU16(view, local + 6);
+    const localMethod = readU16(view, local + 8);
+    if ((entry.flags & 1) || (localFlags & 1)) throw new Error('Encrypted ZIP members are not supported in the offline edition.');
+    if (localMethod !== entry.method) throw new Error(`ZIP compression method does not match for ${entry.name}.`);
     const nameLength = readU16(view, local + 26);
     const extraLength = readU16(view, local + 28);
-    const bodyStart = local + 30 + nameLength + extraLength;
+    const nameEnd = local + 30 + nameLength;
+    const bodyStart = nameEnd + extraLength;
     const bodyEnd = bodyStart + entry.compressedSize;
-    if (bodyStart < local || bodyEnd > archive.end) throw new Error(`ZIP entry is truncated: ${entry.name}`);
+    if (nameEnd > centralStart || bodyStart < local || bodyEnd > centralStart) throw new Error(`ZIP entry is truncated or overlaps the central directory: ${entry.name}`);
+    const localName = safeMemberName(decoder.decode(data.subarray(local + 30, nameEnd)));
+    if (localName !== entry.name) throw new Error(`ZIP filename records disagree for ${entry.name}.`);
     if (entry.size > limit || entry.size > MAX_BYTES) throw new Error(`ZIP entry is too large for this browser: ${entry.name}`);
     const compressed = data.subarray(bodyStart, bodyEnd);
     let output;
-    if (entry.method === 0) output = Uint8Array.from(compressed);
-    else if (entry.method === 8) output = await inflateRaw(compressed, Math.min(limit, entry.size));
+    if (entry.method === 0) output = compressed;
+    else if (entry.method === 8) output = await inflateRaw(compressed, entry.size, signal, onProgress);
     else throw new Error(`Compression method ${entry.method} is not supported in the offline edition.`);
     if (output.length !== entry.size) throw new Error(`Size check failed for ${entry.name}.`);
-    if (crc32(output) !== entry.checksum) throw new Error(`ZIP CRC check failed for ${entry.name}.`);
+    const checksum = await crc32Chunked(output, (current, total) => onProgress?.(current, total, 'crc'), signal);
+    if (checksum !== entry.checksum) throw new Error(`ZIP CRC check failed for ${entry.name}.`);
     return output;
   }
 
@@ -469,15 +670,18 @@
     return diff === 0;
   }
 
-  async function unpackPolyglot(input) {
+  async function unpackPolyglot(input, { onProgress, signal } = {}) {
     const data = input instanceof Uint8Array ? input : new Uint8Array(input);
     if (data.length > MAX_BYTES) throw new Error(`The container exceeds the ${Math.round(MAX_BYTES / 1024 / 1024)} MiB browser limit.`);
+    throwIfAborted(signal);
+    reportProgress(onProgress, 1, 'Scanning for an appended ZIP…');
     const archive = locateArchive(data);
+    if (archive.entryCount > MAX_FILES + 1) throw new Error('The ZIP directory contains too many entries for this browser.');
     const entries = readDirectory(data, archive);
     const manifestEntry = entries.get(MANIFEST_PATH);
     if (!manifestEntry) throw new Error('No PolyglotMaker manifest was found in the appended ZIP.');
     if (manifestEntry.size > 4 * 1024 * 1024) throw new Error('The manifest is larger than the browser-only safety limit.');
-    const manifestBytes = await extractEntry(data, archive, manifestEntry, 4 * 1024 * 1024);
+    const manifestBytes = await extractEntry(data, archive, manifestEntry, 4 * 1024 * 1024, { signal });
     let manifest;
     try { manifest = JSON.parse(decoder.decode(manifestBytes)); }
     catch { throw new Error('The PolyglotMaker manifest is invalid JSON.'); }
@@ -485,39 +689,85 @@
       throw new Error('This is not a supported PolyglotMaker manifest.');
     }
     if (archive.footer) {
-      if (!equalBytes(await sha256(manifestBytes), archive.footer.manifestHash)) throw new Error('The manifest SHA-256 check failed.');
-      const zipBytes = data.subarray(archive.start, archive.end);
-      const eocdInZip = archive.eocd - archive.start;
-      const normalized = concat([zipBytes.subarray(0, eocdInZip + 20), u16(0)]);
-      if (!equalBytes(await sha256(normalized), archive.footer.archiveHash)) throw new Error('The ZIP bundle SHA-256 check failed.');
+      reportProgress(onProgress, 5, 'Verifying bundle integrity…');
+      const manifestHash = await sha256(manifestBytes);
+      throwIfAborted(signal);
+      if (!equalBytes(manifestHash, archive.footer.manifestHash)) throw new Error('The manifest SHA-256 check failed.');
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      const commentLength = readU16(view, archive.eocd + 20);
+      let archiveHash;
+      view.setUint16(archive.eocd + 20, 0, true);
+      try {
+        archiveHash = await sha256(data.subarray(archive.start, archive.eocd + 22));
+      } finally {
+        view.setUint16(archive.eocd + 20, commentLength, true);
+      }
+      throwIfAborted(signal);
+      if (!equalBytes(archiveHash, archive.footer.archiveHash)) throw new Error('The ZIP bundle SHA-256 check failed.');
     }
     if (manifest.files.length > MAX_FILES) throw new Error('The manifest contains too many files for this browser.');
-    const declaredTotal = manifest.files.reduce((sum, item) => sum + Number(item.size || 0), 0);
+    for (const record of manifest.files) {
+      if (!record || typeof record !== 'object') throw new Error('A file record in the manifest is malformed.');
+      const size = Number(record.size);
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error('A file size in the manifest is invalid.');
+    }
+    const declaredTotal = manifest.files.reduce((sum, item) => sum + Number(item.size), 0);
     if (!Number.isSafeInteger(declaredTotal) || declaredTotal < 0 || declaredTotal > MAX_BYTES) throw new Error('The payload set exceeds the browser-only extraction size limit.');
 
     const files = [];
     const seen = new Set();
-    for (const record of manifest.files) {
-      if (!record || typeof record !== 'object') throw new Error('A file record in the manifest is malformed.');
+    let completedBytes = 0;
+    for (let index = 0; index < manifest.files.length; index += 1) {
+      throwIfAborted(signal);
+      const record = manifest.files[index];
       const name = safeMemberName(record.name);
+      const expectedDigest = String(record.sha256 || '');
+      if (!/^[0-9a-f]{64}$/i.test(expectedDigest)) throw new Error(`A valid SHA-256 digest is missing for ${name}.`);
       if (seen.has(name)) throw new Error(`The manifest contains duplicate filenames: ${name}`);
       seen.add(name);
       const entryName = safeMemberName(record.entry || `${PAYLOAD_PREFIX}${name}`);
       const zipEntry = entries.get(entryName);
       if (!zipEntry) throw new Error(`Payload data is missing: ${name}`);
       if (Number(record.size) !== zipEntry.size) throw new Error(`Manifest size does not match for ${name}.`);
-      const bytes = await extractEntry(data, archive, zipEntry, Number(record.size));
+      const size = Number(record.size);
+      const entryBase = declaredTotal ? completedBytes / declaredTotal : index / manifest.files.length;
+      reportProgress(onProgress, 10 + entryBase * 80, `Restoring ${name}…`);
+      const bytes = await extractEntry(data, archive, zipEntry, size, {
+        signal,
+        onProgress: (current, total, phase) => {
+          const withinEntry = total
+            ? (zipEntry.method === 8 && phase === 'inflate' ? current / total * 0.45 : 0.45 + current / total * 0.55)
+            : 1;
+          const fraction = declaredTotal
+            ? (completedBytes + size * withinEntry) / declaredTotal
+            : (index + withinEntry) / manifest.files.length;
+          reportProgress(onProgress, 10 + fraction * 80, `${phase === 'crc' ? 'Checking' : 'Restoring'} ${name}…`);
+        },
+      });
+      const verifiedFraction = declaredTotal
+        ? (completedBytes + size) / declaredTotal
+        : (index + 1) / manifest.files.length;
+      reportProgress(onProgress, 10 + verifiedFraction * 80, `Verifying ${name}…`);
       const digest = await sha256Hex(bytes);
-      if (record.sha256 && digest.toLowerCase() !== String(record.sha256).toLowerCase()) throw new Error(`SHA-256 check failed for ${name}.`);
+      throwIfAborted(signal);
+      if (digest.toLowerCase() !== expectedDigest.toLowerCase()) throw new Error(`SHA-256 check failed for ${name}.`);
       files.push({ name, size: bytes.length, sha256: digest, mime: record.mime || 'application/octet-stream', data: bytes });
+      completedBytes += size;
+      const progress = declaredTotal ? completedBytes / declaredTotal : (index + 1) / manifest.files.length;
+      reportProgress(onProgress, 10 + progress * 80, `Verified ${name}`);
     }
     if (!files.length) throw new Error('The manifest contains no recoverable payload files.');
+    reportProgress(onProgress, 100, 'All payload checksums verified.');
     return { files, source: archive.footer ? 'ZIP bundle · integrity footer verified' : 'ZIP bundle · payload checks verified' };
   }
 
-  function downloadZip(files) {
+  async function downloadZip(files, { onProgress, signal } = {}) {
     const entries = files.map((file) => ({ name: safeMemberName(file.name), data: file.data, mtime: Date.now() / 1000, mode: 0o644 }));
-    return buildStoredZip(entries).bytes;
+    const result = await buildStoredZip(entries, {
+      signal,
+      onProgress: (percent, name) => reportProgress(onProgress, percent, `Packing ${name}…`),
+    });
+    return result.bytes;
   }
 
   return {

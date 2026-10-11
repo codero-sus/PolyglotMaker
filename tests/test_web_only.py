@@ -45,6 +45,27 @@ class BrowserOnlyEditionTests(unittest.TestCase):
         self.assertIn("codero-sus", credits)
         self.assertIn("the-codero.web.app", credits)
 
+    def test_folder_import_progress_and_selective_zip_controls_exist(self):
+        html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
+        app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")
+        for feature in ("webkitdirectory", 'id="payloadSearch"', 'id="clearPayloads"', 'id="createProgress"', 'id="unpackProgress"'):
+            self.assertIn(feature, html)
+        for feature in (
+            "downloadSelectedZip",
+            "selectAllFiles",
+            "unpackedSearch",
+            "AbortController",
+            "MAX_VISIBLE_PAYLOADS",
+            "MAX_VISIBLE_UNPACKED",
+        ):
+            self.assertIn(feature, app)
+
+    def test_zip_writer_uses_chunked_checksums_and_preallocated_output(self):
+        engine = (WEB_ONLY_DIR / "engine.js").read_text(encoding="utf-8")
+        self.assertIn("async function crc32Chunked", engine)
+        self.assertIn("function writeStoredZip", engine)
+        self.assertNotIn("concat([localData, centralData, endRecord])", engine)
+
 
 if __name__ == "__main__":
     unittest.main()
