@@ -70,6 +70,15 @@
               <strong>Drop files here</strong><span>or <b>browse your device</b></span>
               <small>Any file type · names and bytes preserved</small>
             </label>
+            <div class="folder-import">
+              <label class="folder-picker" for="folderFiles"><input id="folderFiles" type="file" multiple webkitdirectory directory aria-label="Choose a folder"><span aria-hidden="true">▤</span> Add a folder</label>
+              <small>Folder paths are preserved in the bundle.</small>
+            </div>
+            <div class="payload-list-toolbar" id="payloadListToolbar" hidden>
+              <input id="payloadSearch" type="search" placeholder="Filter payloads…" aria-label="Filter payload files">
+              <span id="payloadListSummary"></span>
+              <button id="clearPayloads" class="clear-list" type="button">Clear all</button>
+            </div>
             <div class="file-list" id="payloadList" aria-live="polite"><div class="empty-list">Your payloads will appear here.</div></div>
           </section>
 
@@ -85,6 +94,11 @@
             <label class="include-host"><input id="includeHost" type="checkbox" checked><span class="checkmark"></span><span><strong>Include the host in restored files</strong><small>Save a copy with the payloads when unpacking.</small></span></label>
             <div class="host-warning"><span aria-hidden="true">!</span><p>Some strict formats do not allow trailing data. The default PNG shell is the safest option; test custom hosts with their target app.</p></div>
             <button id="createButton" class="primary-button" type="button"><span class="button-spark" aria-hidden="true">✦</span> Build polyglot locally <span class="button-arrow" aria-hidden="true">↗</span></button>
+            <div class="operation-progress" id="createProgress" hidden>
+              <div class="progress-caption"><span data-progress-label aria-live="polite" aria-atomic="true">Preparing files…</span><strong data-progress-value>0%</strong></div>
+              <div class="progress-track" role="progressbar" aria-label="Bundle creation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+              <div class="progress-foot"><small>Large-file checks yield to the browser UI.</small><button type="button" data-cancel-operation="create">Cancel</button></div>
+            </div>
             <div class="local-footnote"><span class="lock-mini" aria-hidden="true">⌑</span> No file leaves this device.</div>
           </aside>
         </div>
@@ -108,6 +122,11 @@
             <div class="container-selected" id="containerSelected" hidden><span class="file-chip-icon" id="containerExt">FILE</span><span class="container-meta"><strong id="containerName"></strong><small id="containerSize"></small></span><button id="clearContainer" class="remove-host" type="button" aria-label="Remove selected container">×</button></div>
             <div class="offline-note"><span aria-hidden="true">i</span><span>This static edition reads appended ZIP bundles (stored or deflate). Raw, obfuscated, and native-only stores need the full Python app.</span></div>
             <button id="unpackButton" class="primary-button violet-button" type="button" disabled>Find and restore files <span class="button-arrow" aria-hidden="true">↗</span></button>
+            <div class="operation-progress violet-progress" id="unpackProgress" hidden>
+              <div class="progress-caption"><span data-progress-label aria-live="polite" aria-atomic="true">Scanning bundle…</span><strong data-progress-value>0%</strong></div>
+              <div class="progress-track" role="progressbar" aria-label="Bundle restore progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+              <div class="progress-foot"><small>ZIP output is built only when requested.</small><button type="button" data-cancel-operation="unpack">Cancel</button></div>
+            </div>
             <div id="unpackResult" class="unpack-result" hidden></div>
           </section>
           <aside class="panel capability-panel">

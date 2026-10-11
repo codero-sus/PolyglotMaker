@@ -8,12 +8,15 @@ Open `index.html` directly in a current browser, or place the whole `web-only` f
 
 ## What it can do
 
+- Add individual files or whole folders; folder-relative paths are kept inside the bundle.
 - Create an appended, uncompressed ZIP bundle with a PolyglotMaker v1 manifest and integrity footer.
 - Use a built-in valid 1×1 PNG shell, or append the bundle to a host file you choose.
 - Keep arbitrary payload bytes intact, with SHA-256 checksums and safe member names.
-- Unpack appended ZIP bundles created by this edition or by PolyglotMaker's normal ZIP/append mode. Save individual files or download all restored files in one ZIP.
+- Unpack appended ZIP bundles created by this edition or by PolyglotMaker's normal ZIP/append mode. Search restored names, select the files you want, save files individually, or build a ZIP of the selection.
+- Search large file lists without flooding the page; at most 150 matching rows render at once.
+- See live progress for long operations and cancel a build, restore, or ZIP export in progress.
 
-The browser-only edition has a 128 MiB selected-data limit. It does not generate all 63 host formats and currently does not unpack raw-store, obfuscated, encrypted, ZIP64, or native-only bundles; use the Python CLI/server for those. Appending to a custom strict-format host can make that host invalid—the built-in PNG shell is the recommended default.
+ZIP output is assembled in a single preallocated buffer; the custom host is read once, extraction reuses stored-data views, and Deflate output streams into its final buffer to reduce peak memory. The browser edition limits containers, extracted data, and ZIP downloads to 128 MiB and supports up to 10,000 files. It does not generate all 63 host formats and currently does not unpack raw-store, obfuscated, encrypted, ZIP64, or native-only bundles; use the Python CLI/server for those. Appending to a custom strict-format host can make that host invalid—the built-in PNG shell is the recommended default.
 
 ## Author & credits
 
