@@ -1,6 +1,8 @@
 # PolyglotMaker
 
-**Easy to use Polyglot Maker yet too much advance.**
+**A Python CLI and browser studio for lossless, multi-format files.**
+
+Created by **[codero-sus](https://github.com/codero-sus)** · [Project website](https://the-codero.web.app/)
 
 PolyglotMaker combines files of different types into one output, then restores the original payload bytes on unpack. A PNG, MP4, executable, PDF, text document, ZIP, or another supported host can carry files of **any type**; inputs are kept byte-for-byte and SHA-256 checked. It includes both a Python CLI and a small browser UI.
 
@@ -76,6 +78,8 @@ polyglot update [--check | --yes] [--json]
 
 The web app is served by `polyglot serve` using `http.server`; it needs no Flask, Node, database, or CDN. It supports drag-and-drop creation, generated or first-file byte-exact hosts, download, inspect with an SVG byte map, unpack, and a searchable format catalog. The server listens on this computer only by default. Use `polyglot serve --lan` to allow devices on your local network; LAN mode has no sign-in, so use it only on a trusted private network and never expose it to the public internet. Same-origin reverse-proxy preview hosts are supported.
 
+For a separate static edition with **no backend**, open [`web-only/index.html`](web-only/index.html) in a current browser. Its create/unpack processing stays in the browser; see [`web-only/README.md`](web-only/README.md) for compatibility notes and limitations.
+
 ## Format integrity and safety
 
 - Each payload is recorded with original name, byte length, MIME guess, mode, mtime, and SHA-256.
@@ -83,6 +87,16 @@ The web app is served by `polyglot serve` using `http.server`; it needs no Flask
 - Unpack validates sizes/checksums, sanitizes paths against zip-slip traversal, and avoids overwriting by default.
 - Generated PE files import `kernel32!ExitProcess`; generated ELF stubs exit with status 0. **PolyglotMaker itself never runs input files or extracted payloads.**
 - Optional test-time validators (Pillow, pypdf, pefile, mutagen) are not runtime requirements. Run `pip install '.[test]'` to install them, then `pytest`.
+
+## Author & credits
+
+PolyglotMaker is authored and maintained by **codero-sus**. All project credits are attributed to codero-sus.
+
+- GitHub: [github.com/codero-sus](https://github.com/codero-sus)
+- Website: [the-codero.web.app](https://the-codero.web.app/)
+- Made with ❤️ by [codero-sus](https://github.com/codero-sus).
+
+See [CREDITS.md](CREDITS.md) for the full attribution.
 
 ## Development
 

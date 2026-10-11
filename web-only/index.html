@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="author" content="codero-sus">
+  <meta name="description" content="Create and unpack PolyglotMaker bundles entirely in your browser. No backend, install, or network requests.">
+  <meta name="theme-color" content="#eef5f0">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="PolyglotMaker Web-only">
+  <meta property="og:url" content="https://the-codero.web.app/">
+  <title>PolyglotMaker · Web-only studio</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./engine.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="PolyglotMaker Web-only home">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="brand-name">polyglotmaker<small>WEB-ONLY STUDIO</small></span>
+    </a>
+    <div class="topbar-actions">
+      <span class="local-badge"><i></i> NO BACKEND</span>
+      <a class="top-link" href="https://github.com/codero-sus" target="_blank" rel="noopener noreferrer">codero-sus <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="eyebrow-line"></span> YOUR FILE WORKBENCH · 100% IN BROWSER</div>
+        <h1>Files, together.<br><em>Backend, nowhere.</em></h1>
+        <p>Create a PolyglotMaker bundle or restore one you already have. Files stay in this browser tab—nothing is uploaded to a server.</p>
+        <div class="hero-pills"><span><i>✓</i> No install</span><span><i>✓</i> No network calls</span><span><i>✓</i> Any payload type</span></div>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="art-orbit art-orbit-a"></div><div class="art-orbit art-orbit-b"></div>
+        <div class="art-center"><span>PLG</span><small>LOCAL</small></div>
+        <i class="art-node node-a"></i><i class="art-node node-b"></i><i class="art-node node-c"></i>
+      </div>
+    </section>
+
+    <div class="privacy-banner">
+      <span class="privacy-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></span>
+      <span class="privacy-copy"><strong>Private by design</strong><small>Processing runs on your device. No upload endpoints, analytics, external scripts, or APIs.</small></span>
+      <span class="privacy-chip">OFFLINE-READY</span>
+    </div>
+
+    <section class="workbench" aria-label="PolyglotMaker tools">
+      <nav class="mode-tabs" aria-label="Choose a tool">
+        <button class="mode-tab active" type="button" data-tab="create" aria-pressed="true"><span class="tab-icon" aria-hidden="true">＋</span><span><strong>Create</strong><small>Bundle files</small></span><span class="tab-arrow" aria-hidden="true">↗</span></button>
+        <button class="mode-tab" type="button" data-tab="unpack" aria-pressed="false"><span class="tab-icon unpack-icon" aria-hidden="true">↙</span><span><strong>Unpack</strong><small>Restore payloads</small></span><span class="tab-arrow" aria-hidden="true">↗</span></button>
+      </nav>
+
+      <section class="tool-view active" id="view-create" aria-labelledby="createTitle">
+        <div class="section-heading">
+          <div><span class="section-kicker">01 / BUILD LOCALLY</span><h2 id="createTitle">Create a <em>polyglot.</em></h2><p>Keep every payload byte intact inside a standard ZIP bundle.</p></div>
+          <span class="size-limit"><span class="size-dot"></span> 128 MiB browser limit</span>
+        </div>
+        <div class="create-grid">
+          <section class="panel payload-panel">
+            <div class="panel-title-row"><div><span class="step-tag">A</span><span><h3>Add payload files</h3><small>Mix formats freely. Files are never converted.</small></span></div><span class="count-badge" id="payloadCount">0 FILES</span></div>
+            <label class="drop-zone" id="payloadDrop" for="payloadFiles">
+              <input id="payloadFiles" type="file" multiple>
+              <span class="upload-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span>
+              <strong>Drop files here</strong><span>or <b>browse your device</b></span>
+              <small>Any file type · names and bytes preserved</small>
+            </label>
+            <div class="file-list" id="payloadList" aria-live="polite"><div class="empty-list">Your payloads will appear here.</div></div>
+          </section>
+
+          <aside class="panel host-panel">
+            <div class="panel-title-row"><div><span class="step-tag violet">B</span><span><h3>Choose a host</h3><small>Where the ZIP bundle will be appended.</small></span></div></div>
+            <div class="host-default"><span class="png-mark">PNG</span><span><strong>Built-in PNG shell</strong><small>A tiny valid image, ready to use.</small></span><span class="recommended">DEFAULT</span></div>
+            <div class="host-divider"><span>OR USE YOUR OWN</span></div>
+            <label class="host-picker" id="hostDrop" for="hostFile">
+              <input id="hostFile" type="file">
+              <span class="host-picker-icon" aria-hidden="true">＋</span><span><strong id="hostPickerTitle">Choose an existing host</strong><small id="hostPickerHint">Optional · keep its original bytes</small></span><span class="picker-arrow" aria-hidden="true">↗</span>
+            </label>
+            <div class="host-selected" id="hostSelected" hidden><span class="file-chip-icon" id="hostExt">FILE</span><span class="host-selected-name"><strong id="hostName"></strong><small id="hostSize"></small></span><button id="clearHost" class="remove-host" type="button" aria-label="Remove custom host">×</button></div>
+            <label class="include-host"><input id="includeHost" type="checkbox" checked><span class="checkmark"></span><span><strong>Include the host in restored files</strong><small>Save a copy with the payloads when unpacking.</small></span></label>
+            <div class="host-warning"><span aria-hidden="true">!</span><p>Some strict formats do not allow trailing data. The default PNG shell is the safest option; test custom hosts with their target app.</p></div>
+            <button id="createButton" class="primary-button" type="button"><span class="button-spark" aria-hidden="true">✦</span> Build polyglot locally <span class="button-arrow" aria-hidden="true">↗</span></button>
+            <div class="local-footnote"><span class="lock-mini" aria-hidden="true">⌑</span> No file leaves this device.</div>
+          </aside>
+        </div>
+        <div id="createResult" class="result-panel" hidden></div>
+      </section>
+
+      <section class="tool-view" id="view-unpack" aria-labelledby="unpackTitle">
+        <div class="section-heading">
+          <div><span class="section-kicker">02 / RESTORE LOCALLY</span><h2 id="unpackTitle">Unpack a <em>polyglot.</em></h2><p>Recover and verify files from an appended PolyglotMaker ZIP bundle.</p></div>
+          <span class="size-limit"><span class="size-dot violet-dot"></span> No sign-in · no upload</span>
+        </div>
+        <div class="unpack-grid">
+          <section class="panel unpack-panel">
+            <div class="panel-title-row"><div><span class="step-tag violet">A</span><span><h3>Select a container</h3><small>Its extension does not matter.</small></span></div></div>
+            <label class="drop-zone compact-drop" id="containerDrop" for="containerFile">
+              <input id="containerFile" type="file">
+              <span class="upload-icon violet-upload" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg></span>
+              <strong id="containerPrompt">Drop a PolyglotMaker file here</strong><span>or <b>browse your device</b></span>
+              <small>Appended ZIP · up to 128 MiB</small>
+            </label>
+            <div class="container-selected" id="containerSelected" hidden><span class="file-chip-icon" id="containerExt">FILE</span><span class="container-meta"><strong id="containerName"></strong><small id="containerSize"></small></span><button id="clearContainer" class="remove-host" type="button" aria-label="Remove selected container">×</button></div>
+            <div class="offline-note"><span aria-hidden="true">i</span><span>This static edition reads appended ZIP bundles (stored or deflate). Raw, obfuscated, and native-only stores need the full Python app.</span></div>
+            <button id="unpackButton" class="primary-button violet-button" type="button" disabled>Find and restore files <span class="button-arrow" aria-hidden="true">↗</span></button>
+            <div id="unpackResult" class="unpack-result" hidden></div>
+          </section>
+          <aside class="panel capability-panel">
+            <span class="capability-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.5c0 4.6 3.2 7.9 7.5 9.5 4.3-1.6 7.5-4.9 7.5-9.5V6L12 3Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span>
+            <h3>Integrity, built in</h3><p>Each recovered file is checked against its SHA-256 digest before it becomes downloadable.</p>
+            <div class="capability-list"><div><span>01</span><strong>ZIP footer validation</strong><small>Checks manifest and archive hashes.</small></div><div><span>02</span><strong>Safe extraction</strong><small>Rejects unsafe paths and oversized data.</small></div><div><span>03</span><strong>Your choice</strong><small>Save one file or download all as ZIP.</small></div></div>
+          </aside>
+        </div>
+      </section>
+    </section>
+
+    <footer class="site-footer" id="credits">
+      <div class="footer-message"><span class="footer-mark" aria-hidden="true">✳</span><span><strong>Made with <span class="footer-heart" aria-hidden="true">❤️</span> by <a href="https://github.com/codero-sus" target="_blank" rel="noopener noreferrer">codero-sus</a></strong><small>Author & all project credits</small></span></div>
+      <div class="footer-links"><a href="https://github.com/codero-sus" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a><a href="https://the-codero.web.app/" target="_blank" rel="noopener noreferrer">Website <span aria-hidden="true">↗</span></a></div>
+      <span class="footer-note">POLYGLOTMAKER · WEB-ONLY · v0.1.0</span>
+    </footer>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
