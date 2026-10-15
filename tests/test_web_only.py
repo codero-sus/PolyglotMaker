@@ -48,12 +48,27 @@ class BrowserOnlyEditionTests(unittest.TestCase):
     def test_folder_import_progress_and_selective_zip_controls_exist(self):
         html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
         app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")
-        for feature in ("webkitdirectory", 'id="payloadSearch"', 'id="clearPayloads"', 'id="createProgress"', 'id="unpackProgress"'):
+        for feature in (
+            "webkitdirectory",
+            'id="payloadSearch"',
+            'id="payloadSort"',
+            'id="payloadBudgetText"',
+            'id="outputFilename"',
+            'id="clearPayloads"',
+            'id="createProgress"',
+            'id="unpackProgress"',
+        ):
             self.assertIn(feature, html)
         for feature in (
             "downloadSelectedZip",
+            "downloadVerificationReport",
             "selectAllFiles",
+            "selectNoneFiles",
+            "invertFiles",
+            "unpackedSort",
             "unpackedSearch",
+            "copyText",
+            "outputFilename",
             "AbortController",
             "MAX_VISIBLE_PAYLOADS",
             "MAX_VISIBLE_UNPACKED",
@@ -64,6 +79,7 @@ class BrowserOnlyEditionTests(unittest.TestCase):
         engine = (WEB_ONLY_DIR / "engine.js").read_text(encoding="utf-8")
         self.assertIn("async function crc32Chunked", engine)
         self.assertIn("function writeStoredZip", engine)
+        self.assertIn("bundleSha256", engine)
         self.assertNotIn("concat([localData, centralData, endRecord])", engine)
 
 

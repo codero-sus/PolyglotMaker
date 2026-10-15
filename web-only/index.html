@@ -75,11 +75,16 @@
               <small>Folder paths are preserved in the bundle.</small>
             </div>
             <div class="payload-list-toolbar" id="payloadListToolbar" hidden>
-              <input id="payloadSearch" type="search" placeholder="Filter payloads…" aria-label="Filter payload files">
+              <input id="payloadSearch" type="search" placeholder="Filter names or MIME types…" aria-label="Filter payload files by name or type">
+              <select id="payloadSort" class="sort-select" aria-label="Sort payload files"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="size-asc">Smallest</option><option value="size-desc">Largest</option></select>
               <span id="payloadListSummary"></span>
               <button id="clearPayloads" class="clear-list" type="button">Clear all</button>
             </div>
             <div class="file-list" id="payloadList" aria-live="polite"><div class="empty-list">Your payloads will appear here.</div></div>
+            <div class="payload-capacity" aria-live="polite">
+              <div><small id="payloadBudgetText">0 B of 128 MiB estimated</small><strong id="payloadFileTotal">0 files</strong></div>
+              <div class="capacity-track" role="progressbar" aria-label="Estimated container size budget" aria-valuemin="0" aria-valuemax="128" aria-valuenow="0"><span></span></div>
+            </div>
           </section>
 
           <aside class="panel host-panel">
@@ -92,6 +97,7 @@
             </label>
             <div class="host-selected" id="hostSelected" hidden><span class="file-chip-icon" id="hostExt">FILE</span><span class="host-selected-name"><strong id="hostName"></strong><small id="hostSize"></small></span><button id="clearHost" class="remove-host" type="button" aria-label="Remove custom host">×</button></div>
             <label class="include-host"><input id="includeHost" type="checkbox" checked><span class="checkmark"></span><span><strong>Include the host in restored files</strong><small>Save a copy with the payloads when unpacking.</small></span></label>
+            <label class="output-name" for="outputFilename"><span>Download filename</span><span class="output-name-field"><input id="outputFilename" type="text" value="polyglotmaker" maxlength="100" autocomplete="off" spellcheck="false"><small id="outputExtension">.png</small></span><small>The selected host’s extension is kept automatically.</small></label>
             <div class="host-warning"><span aria-hidden="true">!</span><p>Some strict formats do not allow trailing data. The default PNG shell is the safest option; test custom hosts with their target app.</p></div>
             <button id="createButton" class="primary-button" type="button"><span class="button-spark" aria-hidden="true">✦</span> Build polyglot locally <span class="button-arrow" aria-hidden="true">↗</span></button>
             <div class="operation-progress" id="createProgress" hidden>

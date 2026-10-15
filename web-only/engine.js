@@ -364,7 +364,7 @@
     view.setUint16(eocdOffset + 20, comment.length, true);
     result.set(comment, hostBytes.length + layout.totalSize);
     reportProgress(onProgress, 100, 'Integrity footer ready.');
-    return { bytes: result, length: zipLength };
+    return { bytes: result, length: zipLength, bundleSha256: toHex(archiveHash) };
   }
 
   function pngShell() {
@@ -518,7 +518,8 @@
       hostBytes: hostBytes.length,
       bundleBytes: bundle.length,
       totalBytes: bytes.length,
-      files: records.map(({ name, size, sha256: digest }) => ({ name, size, sha256: digest })),
+      bundleSha256: bundle.bundleSha256,
+      files: records.map(({ name, size, sha256: digest, mime, role }) => ({ name, size, sha256: digest, mime, role })),
     };
   }
 
@@ -751,14 +752,18 @@
       const digest = await sha256Hex(bytes);
       throwIfAborted(signal);
       if (digest.toLowerCase() !== expectedDigest.toLowerCase()) throw new Error(`SHA-256 check failed for ${name}.`);
-      files.push({ name, size: bytes.length, sha256: digest, mime: record.mime || 'application/octet-stream', data: bytes });
+      files.push({ name, size: bytes.length, sha256: digest, mime: record.mime || 'application/octet-stream', role: record.role || 'payload', data: bytes });
       completedBytes += size;
       const progress = declaredTotal ? completedBytes / declaredTotal : (index + 1) / manifest.files.length;
       reportProgress(onProgress, 10 + progress * 80, `Verified ${name}`);
     }
     if (!files.length) throw new Error('The manifest contains no recoverable payload files.');
     reportProgress(onProgress, 100, 'All payload checksums verified.');
-    return { files, source: archive.footer ? 'ZIP bundle · integrity footer verified' : 'ZIP bundle · payload checks verified' };
+    return {
+      files,
+      source: archive.footer ? 'ZIP bundle · integrity footer verified' : 'ZIP bundle · payload checks verified',
+      bundleSha256: archive.footer ? toHex(archive.footer.archiveHash) : null,
+    };
   }
 
   async function downloadZip(files, { onProgress, signal } = {}) {
