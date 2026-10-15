@@ -6,13 +6,18 @@
   const state = {
     payloads: [],
     payloadSearch: '',
+    payloadSort: 'name-asc',
     hostFile: null,
     containerFile: null,
     unpackedFiles: [],
     selectedUnpacked: new Set(),
     unpackedSearch: '',
+    unpackedSort: 'name-asc',
+    unpackSource: '',
+    unpackBundleSha256: null,
     toastTimer: 0,
     createUrl: null,
+    createResult: null,
     createController: null,
     unpackController: null,
     zipController: null,
@@ -46,6 +51,66 @@
   function totalSourceBytes(files = state.payloads, hostFile = state.hostFile, includeHost = $('#includeHost')?.checked) {
     const payloadBytes = files.reduce((total, file) => total + file.size, 0);
     return payloadBytes + (hostFile ? hostFile.size * (includeHost ? 2 : 1) : 0);
+  }
+
+  const fileNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  function compareFileRows(left, right, sort, getName) {
+    const nameLeft = getName(left.file);
+    const nameRight = getName(right.file);
+    const direction = sort.endsWith('desc') ? -1 : 1;
+    const primary = sort.startsWith('size')
+      ? left.file.size - right.file.size
+      : fileNameCollator.compare(nameLeft, nameRight);
+    return direction * (primary || fileNameCollator.compare(nameLeft, nameRight));
+  }
+
+  function normalizePath(name) {
+    return String(name || '').split(String.fromCharCode(92)).join('/');
+  }
+
+  function getOutputExtension(name) {
+    const base = normalizePath(name).split('/').pop();
+    const dot = base.lastIndexOf('.');
+    const extension = dot > 0 ? base.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 10) : '';
+    return extension || 'polyglot';
+  }
+
+  function outputFilename(stem, fallback) {
+    const fallbackBase = normalizePath(fallback || 'polyglotmaker.polyglot').split('/').pop();
+    const dot = fallbackBase.lastIndexOf('.');
+    const extension = dot > 0 ? fallbackBase.slice(dot) : '.polyglot';
+    const fallbackStem = dot > 0 ? fallbackBase.slice(0, dot) : fallbackBase;
+    const safeStem = [...String(stem || '').trim()]
+      .map((character) => {
+        const code = character.charCodeAt(0);
+        return '<>:\"|?*'.includes(character) || code < 32 || code === 127 ? '_' : character;
+      })
+      .join('')
+      .split(String.fromCharCode(92)).join('_')
+      .replaceAll('/', '_')
+      .replace(/^[. ]+/, '')
+      .replace(/[. ]+$/, '')
+      .slice(0, 100)
+      .replace(/[. ]+$/, '');
+    const normalizedStem = safeStem.toLowerCase().endsWith(extension.toLowerCase())
+      ? safeStem.slice(0, -extension.length)
+      : safeStem;
+    const selectedStem = normalizedStem || fallbackStem;
+    const portableStem = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(selectedStem) ? `_${selectedStem}` : selectedStem;
+    return `${portableStem}${extension}`;
+  }
+
+  function updatePayloadBudget() {
+    const bytes = totalSourceBytes();
+    const mib = Math.min(LIMIT / (1024 ** 2), bytes / (1024 ** 2));
+    const fileCount = state.payloads.length + (state.hostFile && $('#includeHost')?.checked ? 1 : 0);
+    $('#payloadBudgetText').textContent = `${prettyBytes(bytes)} of ${prettyBytes(LIMIT)} estimated`;
+    $('#payloadFileTotal').textContent = `${fileCount.toLocaleString()} file${fileCount === 1 ? '' : 's'}`;
+    const track = $('.capacity-track');
+    track.setAttribute('aria-valuemax', String(LIMIT / (1024 ** 2)));
+    track.setAttribute('aria-valuenow', String(Number(mib.toFixed(2))));
+    track.firstElementChild.style.width = `${Math.min(100, bytes / LIMIT * 100)}%`;
   }
 
   function notify(message, error = false) {
@@ -87,12 +152,15 @@
     $('#createResult').hidden = true;
     if (state.createUrl) URL.revokeObjectURL(state.createUrl);
     state.createUrl = null;
+    state.createResult = null;
   }
 
   function clearUnpackedResult() {
     state.unpackedFiles = [];
     state.selectedUnpacked.clear();
     state.unpackedSearch = '';
+    state.unpackSource = '';
+    state.unpackBundleSha256 = null;
     const target = $('#unpackResult');
     target.replaceChildren();
     target.hidden = true;
@@ -132,6 +200,7 @@
     const toolbar = $('#payloadListToolbar');
     const count = state.payloads.length;
     $('#payloadCount').textContent = `${count} FILE${count === 1 ? '' : 'S'}`;
+    updatePayloadBudget();
     toolbar.hidden = count === 0;
     if (!count) {
       $('#payloadListSummary').textContent = '';
@@ -143,8 +212,10 @@
     const query = state.payloadSearch.trim().toLocaleLowerCase();
     const matching = [];
     state.payloads.forEach((file, index) => {
-      if (!query || payloadName(file).toLocaleLowerCase().includes(query)) matching.push({ file, index });
+      const searchable = `${payloadName(file)} ${file.type || ''}`.toLocaleLowerCase();
+      if (!query || searchable.includes(query)) matching.push({ file, index });
     });
+    matching.sort((left, right) => compareFileRows(left, right, state.payloadSort, payloadName));
     const visible = matching.slice(0, MAX_VISIBLE_PAYLOADS);
     $('#payloadListSummary').textContent = query ? `${matching.length} match${matching.length === 1 ? '' : 'es'}` : `${count} total`;
     if (!visible.length) {
@@ -210,6 +281,8 @@
       $('#hostName').textContent = file.name;
       $('#hostSize').textContent = `${prettyBytes(file.size)} · ${file.type || 'unknown file type'}`;
     }
+    $('#outputExtension').textContent = `.${getOutputExtension(file?.name || 'web-only.png')}`;
+    updatePayloadBudget();
     clearCreateResult();
     updateOperationButtons();
   }
@@ -247,8 +320,52 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
+  async function copyText(value, label) {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const field = document.createElement('textarea');
+        field.value = value;
+        field.setAttribute('readonly', '');
+        field.style.position = 'fixed';
+        field.style.opacity = '0';
+        document.body.append(field);
+        field.select();
+        let copied = false;
+        try { copied = document.execCommand('copy'); }
+        finally { field.remove(); }
+        if (!copied) throw new Error('Clipboard access is unavailable in this browser.');
+      }
+      notify(`${label} copied to clipboard.`);
+    } catch (error) {
+      notify(error.message || 'Could not copy to the clipboard.', true);
+    }
+  }
+
+  function reportFilename(name) {
+    const base = normalizePath(name || 'polyglotmaker').split('/').pop();
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    return outputFilename(`${stem || 'polyglotmaker'}-verification`, 'polyglotmaker-verification.json');
+  }
+
+  function downloadVerificationReport(files, metadata = {}) {
+    const report = {
+      tool: 'PolyglotMaker',
+      format_version: 1,
+      generated_utc: new Date().toISOString(),
+      source: metadata.source || 'locally generated in the browser',
+      zip_archive_sha256: metadata.bundleSha256 || null,
+      host: metadata.host || null,
+      files: files.map(({ name, size, sha256, mime, role }) => ({ name, size, sha256, mime: mime || 'application/octet-stream', role: role || 'payload' })),
+    };
+    const json = `${JSON.stringify(report, null, 2)}\n`;
+    clickDownload(new Blob([json], { type: 'application/json' }), metadata.filename || reportFilename(metadata.name));
+  }
+
   function downloadFile(file) {
-    clickDownload(new Blob([file.data], { type: file.mime || 'application/octet-stream' }), file.name.split('/').pop() || 'payload.bin');
+    clickDownload(new Blob([file.data], { type: file.mime || 'application/octet-stream' }), normalizePath(file.name).split('/').pop() || 'payload.bin');
   }
 
   function bindDropZone(id, handler) {
@@ -290,9 +407,14 @@
       if (state.createUrl) URL.revokeObjectURL(state.createUrl);
       const blob = new Blob([result.bytes], { type: 'application/octet-stream' });
       state.createUrl = URL.createObjectURL(blob);
+      const finalName = outputFilename($('#outputFilename').value, result.fileName);
+      state.createResult = {
+        files: result.files,
+        metadata: { bundleSha256: result.bundleSha256, host: result.host, name: finalName, filename: reportFilename(finalName) },
+      };
       const output = $('#createResult');
       output.hidden = false;
-      output.innerHTML = `<span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(result.totalBytes)} · ${escapeHtml(result.host.toUpperCase())} host</small></span><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(result.fileName)}">Download ${escapeHtml(result.fileName)} <span aria-hidden="true">↓</span></a>`;
+      output.innerHTML = `<div class="result-summary"><span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(result.totalBytes)} · ${escapeHtml(result.host.toUpperCase())} host</small></span></div><div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div><div class="result-actions"><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(finalName)}">Download ${escapeHtml(finalName)} <span aria-hidden="true">↓</span></a><button class="report-download" type="button" data-create-report>Save report</button></div>`;
       output.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
       notify('Container created. Your files stayed on this device.');
     } catch (error) {
@@ -325,8 +447,11 @@
     selectAll.checked = total > 0 && selected === total;
     selectAll.indeterminate = selected > 0 && selected < total;
     selectAll.disabled = busy;
-    $$('[data-file-select]', target).forEach((checkbox) => { checkbox.disabled = busy; });
+    $('#selectNoneFiles', target).disabled = busy;
+    $('#invertFiles', target).disabled = busy;
     $('#unpackedSearch', target).disabled = busy;
+    $('#unpackedSort', target).disabled = busy;
+    $$('[data-file-select]', target).forEach((checkbox) => { checkbox.disabled = busy; });
     summary.textContent = `${selected} of ${total} selected`;
     button.disabled = selected === 0 || busy;
     button.textContent = selected === total
@@ -340,14 +465,16 @@
     const query = state.unpackedSearch.trim().toLocaleLowerCase();
     const matching = [];
     state.unpackedFiles.forEach((file, index) => {
-      if (!query || file.name.toLocaleLowerCase().includes(query)) matching.push({ file, index });
+      const searchable = `${file.name} ${file.mime || ''}`.toLocaleLowerCase();
+      if (!query || searchable.includes(query)) matching.push({ file, index });
     });
+    matching.sort((left, right) => compareFileRows(left, right, state.unpackedSort, (file) => file.name));
     const visible = matching.slice(0, MAX_VISIBLE_UNPACKED);
     if (!visible.length) {
       results.innerHTML = '<div class="empty-list">No restored files match that filter.</div>';
       return;
     }
-    results.innerHTML = visible.map(({ file, index }) => `<div class="unpack-file-row" data-file-name="${escapeHtml(file.name.toLocaleLowerCase())}"><label class="file-select" title="Select ${escapeHtml(file.name)}"><input type="checkbox" data-file-select="${index}" ${state.selectedUnpacked.has(index) ? 'checked' : ''} aria-label="Include ${escapeHtml(file.name)} in ZIP download"><span aria-hidden="true"></span></label><span class="file-chip-icon">${escapeHtml(extension(file.name))}</span><span><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small>${prettyBytes(file.size)} · SHA-256 ${escapeHtml(file.sha256.slice(0, 12))}…</small></span><button class="save-one" type="button" data-save="${index}" aria-label="Save ${escapeHtml(file.name)}">Save ↓</button></div>`).join('');
+    results.innerHTML = visible.map(({ file, index }) => `<div class="unpack-file-row" data-file-name="${escapeHtml(file.name.toLocaleLowerCase())}"><label class="file-select" title="Select ${escapeHtml(file.name)}"><input type="checkbox" data-file-select="${index}" ${state.selectedUnpacked.has(index) ? 'checked' : ''} aria-label="Include ${escapeHtml(file.name)} in ZIP download"><span aria-hidden="true"></span></label><span class="file-chip-icon">${escapeHtml(extension(file.name))}</span><span><strong title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</strong><small>${prettyBytes(file.size)} · SHA-256 ${escapeHtml(file.sha256.slice(0, 12))}…</small></span><div class="file-actions"><button class="copy-digest compact-copy" type="button" data-copy-hash="${index}" aria-label="Copy SHA-256 for ${escapeHtml(file.name)}">Hash</button><button class="save-one" type="button" data-save="${index}" aria-label="Save ${escapeHtml(file.name)}">Save ↓</button></div></div>`).join('');
     if (matching.length > visible.length) {
       results.insertAdjacentHTML('beforeend', `<div class="render-limit">Showing ${visible.length} of ${matching.length}. Filter to find more files.</div>`);
     }
@@ -365,11 +492,14 @@
     state.unpackedFiles = result.files;
     state.selectedUnpacked = new Set(result.files.map((_, index) => index));
     state.unpackedSearch = '';
+    state.unpackSource = result.source;
+    state.unpackBundleSha256 = result.bundleSha256 || null;
     const total = result.files.reduce((sum, item) => sum + item.size, 0);
     target.hidden = false;
-    target.innerHTML = `<div class="unpacked-result-head"><div class="unpack-success"><span class="success-check" aria-hidden="true">✓</span><span><strong>${result.files.length} file${result.files.length === 1 ? '' : 's'} verified</strong><small>${prettyBytes(total)} total · ${escapeHtml(result.source)}</small></span></div><button class="download-all" id="downloadSelectedZip" type="button">Download all as ZIP (${result.files.length}) ↓</button></div>
-      <div class="unpacked-tools"><label class="select-all-control"><input id="selectAllFiles" type="checkbox" checked> Select all files</label><span class="selection-summary" id="selectionSummary">${result.files.length} of ${result.files.length} selected</span><input class="unpacked-search" id="unpackedSearch" type="search" placeholder="Filter restored files…" aria-label="Filter restored files"></div>
+    target.innerHTML = `<div class="unpacked-result-head"><div class="unpack-success"><span class="success-check" aria-hidden="true">✓</span><span><strong>${result.files.length} file${result.files.length === 1 ? '' : 's'} verified</strong><small>${prettyBytes(total)} total · ${escapeHtml(result.source)}</small></span></div><div class="unpacked-result-actions"><button class="report-download" id="downloadReport" type="button">Save verification report</button><button class="download-all" id="downloadSelectedZip" type="button">Download all as ZIP (${result.files.length}) ↓</button></div></div>${result.bundleSha256 ? `<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div>` : ''}
+      <div class="unpacked-tools"><div class="selection-controls"><label class="select-all-control"><input id="selectAllFiles" type="checkbox" checked> Select all</label><button id="selectNoneFiles" type="button">None</button><button id="invertFiles" type="button">Invert</button></div><span class="selection-summary" id="selectionSummary">${result.files.length} of ${result.files.length} selected</span><input class="unpacked-search" id="unpackedSearch" type="search" placeholder="Filter names or MIME types…" aria-label="Filter restored files by name or type"><select id="unpackedSort" class="sort-select" aria-label="Sort restored files"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="size-asc">Smallest</option><option value="size-desc">Largest</option></select></div>
       <div class="file-results"></div>`;
+    $('#unpackedSort', target).value = state.unpackedSort;
     renderUnpackedRows();
     updateUnpackedSelection();
   }
@@ -469,6 +599,10 @@
       state.payloadSearch = event.target.value;
       drawPayloads();
     });
+    $('#payloadSort').addEventListener('change', (event) => {
+      state.payloadSort = event.target.value;
+      drawPayloads();
+    });
     $('#payloadList').addEventListener('click', (event) => {
       const button = event.target.closest('[data-remove]');
       if (button) removePayload(Number(button.dataset.remove));
@@ -493,14 +627,26 @@
         notify('Including a copy of this host would exceed the browser size limit.', true);
       }
       clearCreateResult();
+      updatePayloadBudget();
       updateOperationButtons();
     });
     $('#createButton').addEventListener('click', buildContainer);
+    $('#createResult').addEventListener('click', (event) => {
+      const copyButton = event.target.closest('[data-copy-value]');
+      if (copyButton) copyText(copyButton.dataset.copyValue, 'Bundle SHA-256');
+      if (event.target.closest('[data-create-report]') && state.createResult) {
+        downloadVerificationReport(state.createResult.files, state.createResult.metadata);
+      }
+    });
     $('#unpackButton').addEventListener('click', unpackContainer);
     $('#unpackResult').addEventListener('change', (event) => {
       if (event.target.id === 'selectAllFiles') {
         if (event.target.checked) state.selectedUnpacked = new Set(state.unpackedFiles.map((_, index) => index));
         else state.selectedUnpacked.clear();
+        renderUnpackedRows();
+        updateUnpackedSelection();
+      } else if (event.target.id === 'unpackedSort') {
+        state.unpackedSort = event.target.value;
         renderUnpackedRows();
         updateUnpackedSelection();
       } else if (event.target.matches('[data-file-select]')) {
@@ -515,10 +661,36 @@
     });
     $('#unpackResult').addEventListener('click', (event) => {
       const saveButton = event.target.closest('[data-save]');
+      const hashButton = event.target.closest('[data-copy-hash]');
+      const bundleCopyButton = event.target.closest('[data-copy-value]');
       if (saveButton) downloadFile(state.unpackedFiles[Number(saveButton.dataset.save)]);
+      if (bundleCopyButton) copyText(bundleCopyButton.dataset.copyValue, 'ZIP integrity SHA-256');
+      if (hashButton) {
+        const file = state.unpackedFiles[Number(hashButton.dataset.copyHash)];
+        if (file) copyText(file.sha256, 'File SHA-256');
+      }
+      if (event.target.closest('#selectNoneFiles')) {
+        state.selectedUnpacked.clear();
+        renderUnpackedRows();
+        updateUnpackedSelection();
+      }
+      if (event.target.closest('#invertFiles')) {
+        state.selectedUnpacked = new Set(state.unpackedFiles.map((_, index) => index).filter((index) => !state.selectedUnpacked.has(index)));
+        renderUnpackedRows();
+        updateUnpackedSelection();
+      }
+      if (event.target.closest('#downloadReport')) {
+        downloadVerificationReport(state.unpackedFiles, {
+          source: state.unpackSource,
+          bundleSha256: state.unpackBundleSha256,
+          name: state.containerFile?.name,
+          filename: reportFilename(state.containerFile?.name),
+        });
+      }
       if (event.target.closest('#downloadSelectedZip')) downloadSelectedZip();
     });
     $$('[data-cancel-operation]').forEach((button) => button.addEventListener('click', () => cancelOperation(button.dataset.cancelOperation)));
+    updatePayloadBudget();
     updateOperationButtons();
 
     if (!window.crypto?.subtle) {
