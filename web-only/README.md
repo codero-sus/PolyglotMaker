@@ -4,7 +4,7 @@ This folder is a standalone, static, browser-only version. It does not need Pyth
 
 ## Run it
 
-Open `index.html` directly in a current browser, or place the whole `web-only` folder on any static web host. Keep `index.html`, `styles.css`, `engine.js`, and `app.js` together. The web-only app makes no network requests; the optional static host only serves these files.
+Open `index.html` directly in a current browser, or place the whole `web-only` folder on any static web host. Keep the local assets together. File processing never uploads data or calls a remote service. When opened from `file://`, the app works without a service worker; when served from HTTPS or localhost, it can cache only its static app shell for offline reopening and offer installation.
 
 ## What it can do
 
@@ -17,6 +17,8 @@ Open `index.html` directly in a current browser, or place the whole `web-only` f
 - Choose a safe output filename, see an estimated size/file-count budget, and use bulk select, clear, or invert controls for restored files.
 - Copy bundle and per-file SHA-256 digests, or save a JSON verification report containing file metadata (never file contents).
 - See live progress for long operations and cancel a build, restore, or ZIP export in progress.
+
+Theme, sort, output-name, and host-inclusion preferences can be remembered locally; selected files, source paths, and file contents are never persisted. The service worker caches only versioned static app assets, not user data.
 
 ZIP output is assembled in a single preallocated buffer; the custom host is read once, extraction reuses stored-data views, and Deflate output streams into its final buffer to reduce peak memory. The browser edition limits containers, extracted data, and ZIP downloads to 128 MiB and supports up to 10,000 files. It does not generate all 63 host formats and currently does not unpack raw-store, obfuscated, encrypted, ZIP64, or native-only bundles; use the Python CLI/server for those. Appending to a custom strict-format host can make that host invalid—the built-in PNG shell is the recommended default.
 

@@ -21,11 +21,16 @@
     createController: null,
     unpackController: null,
     zipController: null,
+    theme: 'light',
+    themePinned: false,
+    installPrompt: null,
   };
   const LIMIT = window.PolyglotEngine?.MAX_BYTES || 128 * 1024 * 1024;
   const MAX_FILES = window.PolyglotEngine?.MAX_FILES || 10000;
   const MAX_VISIBLE_PAYLOADS = 150;
   const MAX_VISIBLE_UNPACKED = 150;
+  const PREFERENCES_KEY = 'polyglotmaker-web-only-preferences-v1';
+  const SORT_OPTIONS = new Set(['name-asc', 'name-desc', 'size-asc', 'size-desc']);
 
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -111,6 +116,56 @@
     track.setAttribute('aria-valuemax', String(LIMIT / (1024 ** 2)));
     track.setAttribute('aria-valuenow', String(Number(mib.toFixed(2))));
     track.firstElementChild.style.width = `${Math.min(100, bytes / LIMIT * 100)}%`;
+  }
+
+  function readPreferences() {
+    try {
+      const value = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}');
+      return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function savePreferences() {
+    try {
+      localStorage.setItem(PREFERENCES_KEY, JSON.stringify({
+        theme: state.theme,
+        payloadSort: state.payloadSort,
+        unpackedSort: state.unpackedSort,
+        outputStem: $('#outputFilename').value,
+        includeHost: $('#includeHost').checked,
+      }));
+    } catch { /* Local storage may be disabled; the app still works without it. */ }
+  }
+
+  function setTheme(theme, persist = true) {
+    state.theme = theme === 'dark' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = state.theme;
+    const dark = state.theme === 'dark';
+    const button = $('#themeToggle');
+    button.setAttribute('aria-pressed', String(dark));
+    button.setAttribute('aria-label', `Switch to ${dark ? 'light' : 'dark'} theme`);
+    button.title = `Switch to ${dark ? 'light' : 'dark'} theme`;
+    $('span', button).textContent = dark ? '☀' : '◐';
+    $('meta[name="theme-color"]').content = dark ? '#101a15' : '#eef5f0';
+    if (persist) {
+      state.themePinned = true;
+      savePreferences();
+    }
+  }
+
+  function restorePreferences() {
+    const preferences = readPreferences();
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const savedTheme = preferences.theme === 'dark' || preferences.theme === 'light';
+    state.themePinned = savedTheme;
+    state.payloadSort = SORT_OPTIONS.has(preferences.payloadSort) ? preferences.payloadSort : 'name-asc';
+    state.unpackedSort = SORT_OPTIONS.has(preferences.unpackedSort) ? preferences.unpackedSort : 'name-asc';
+    if (typeof preferences.outputStem === 'string') $('#outputFilename').value = preferences.outputStem.slice(0, 100);
+    if (typeof preferences.includeHost === 'boolean') $('#includeHost').checked = preferences.includeHost;
+    $('#payloadSort').value = state.payloadSort;
+    setTheme(savedTheme ? preferences.theme : (systemDark ? 'dark' : 'light'), false);
   }
 
   function notify(message, error = false) {
@@ -575,6 +630,86 @@
     else if (kind === 'unpack') (state.unpackController || state.zipController)?.abort();
   }
 
+  function isEditableTarget(target) {
+    return target instanceof Element && (target.matches('input, textarea, select') || target.isContentEditable);
+  }
+
+  function activeFilter() {
+    const unpacking = $('#view-unpack').classList.contains('active');
+    const search = $(unpacking ? '#unpackedSearch' : '#payloadSearch');
+    return search && !search.closest('[hidden]') ? search : null;
+  }
+
+  function openShortcutDialog() {
+    const dialog = $('#shortcutDialog');
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+  }
+
+  function closeShortcutDialog() {
+    const dialog = $('#shortcutDialog');
+    if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+    else dialog.removeAttribute('open');
+  }
+
+  function handleKeyboardShortcuts(event) {
+    const dialog = $('#shortcutDialog');
+    const filter = activeFilter();
+    if (event.key === 'Escape') {
+      if (dialog.open) { closeShortcutDialog(); return; }
+      if ((event.target === filter || !isEditableTarget(event.target)) && filter?.value) {
+        filter.value = '';
+        filter.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return;
+    }
+    if (isEditableTarget(event.target)) return;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === '1') {
+      event.preventDefault();
+      switchTab('create');
+    } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.key === '2') {
+      event.preventDefault();
+      switchTab('unpack');
+    } else if (event.key === '?') {
+      event.preventDefault();
+      openShortcutDialog();
+    } else if (event.key === '/') {
+      event.preventDefault();
+      if (filter) filter.focus({ preventScroll: true });
+      else $($('#view-unpack').classList.contains('active') ? '#containerFile' : '#payloadFiles').focus({ preventScroll: true });
+    }
+  }
+
+  function registerOfflineApp() {
+    if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+      navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+    }
+    window.addEventListener('beforeinstallprompt', (event) => {
+      event.preventDefault();
+      state.installPrompt = event;
+      $('#installApp').hidden = false;
+    });
+    window.addEventListener('appinstalled', () => {
+      state.installPrompt = null;
+      $('#installApp').hidden = true;
+      notify('PolyglotMaker is installed. Cached app assets work offline; your files remain local.');
+    });
+    $('#installApp').addEventListener('click', async () => {
+      if (!state.installPrompt) return;
+      const prompt = state.installPrompt;
+      state.installPrompt = null;
+      try {
+        await prompt.prompt();
+        const result = await prompt.userChoice;
+        if (result?.outcome === 'accepted') notify('App installation started.');
+      } catch {
+        notify('Use your browser menu to install this app.', true);
+      } finally {
+        $('#installApp').hidden = true;
+      }
+    });
+  }
+
   function init() {
     if (!window.PolyglotEngine) {
       notify('The local bundle engine did not load. Keep engine.js beside index.html.', true);
@@ -582,6 +717,20 @@
       $('#unpackButton').disabled = true;
       return;
     }
+    restorePreferences();
+    registerOfflineApp();
+    const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+    systemTheme.addEventListener?.('change', () => {
+      if (!state.themePinned) setTheme(systemTheme.matches ? 'dark' : 'light', false);
+    });
+    $('#themeToggle').addEventListener('click', () => setTheme(state.theme === 'dark' ? 'light' : 'dark'));
+    $('#shortcutHelp').addEventListener('click', openShortcutDialog);
+    $('#closeShortcutDialog').addEventListener('click', closeShortcutDialog);
+    $('#closeShortcutDialogFooter').addEventListener('click', closeShortcutDialog);
+    $('#shortcutDialog').addEventListener('click', (event) => {
+      if (event.target === event.currentTarget) closeShortcutDialog();
+    });
+    window.addEventListener('keydown', handleKeyboardShortcuts);
     $$('.mode-tab').forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
     bindDropZone('payloadDrop', addPayloads);
     bindDropZone('hostDrop', (files) => setHostFile(files[0] || null));
@@ -601,6 +750,7 @@
     });
     $('#payloadSort').addEventListener('change', (event) => {
       state.payloadSort = event.target.value;
+      savePreferences();
       drawPayloads();
     });
     $('#payloadList').addEventListener('click', (event) => {
@@ -608,6 +758,7 @@
       if (button) removePayload(Number(button.dataset.remove));
     });
     $('#clearPayloads').addEventListener('click', clearPayloads);
+    $('#outputFilename').addEventListener('change', savePreferences);
     $('#hostFile').addEventListener('change', (event) => {
       setHostFile(event.target.files[0] || null);
       event.target.value = '';
@@ -628,6 +779,7 @@
       }
       clearCreateResult();
       updatePayloadBudget();
+      savePreferences();
       updateOperationButtons();
     });
     $('#createButton').addEventListener('click', buildContainer);
@@ -647,6 +799,7 @@
         updateUnpackedSelection();
       } else if (event.target.id === 'unpackedSort') {
         state.unpackedSort = event.target.value;
+        savePreferences();
         renderUnpackedRows();
         updateUnpackedSelection();
       } else if (event.target.matches('[data-file-select]')) {

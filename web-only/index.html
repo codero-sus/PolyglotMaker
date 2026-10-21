@@ -3,10 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <meta name="author" content="codero-sus">
-  <meta name="description" content="Create and unpack PolyglotMaker bundles entirely in your browser. No backend, install, or network requests.">
+  <meta name="description" content="Create and unpack PolyglotMaker bundles entirely in your browser. No backend, uploads, or remote services.">
   <meta name="theme-color" content="#eef5f0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="PolyglotMaker">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="PolyglotMaker Web-only">
   <meta property="og:url" content="https://the-codero.web.app/">
@@ -25,6 +32,9 @@
     </a>
     <div class="topbar-actions">
       <span class="local-badge"><i></i> NO BACKEND</span>
+      <button id="themeToggle" class="topbar-tool" type="button" aria-label="Switch to dark theme" title="Switch to dark theme" aria-pressed="false"><span aria-hidden="true">◐</span></button>
+      <button id="shortcutHelp" class="topbar-tool shortcut-help" type="button" aria-label="Show keyboard shortcuts" title="Keyboard shortcuts (?)"><span aria-hidden="true">?</span></button>
+      <button id="installApp" class="install-app" type="button" hidden>Install app</button>
       <a class="top-link" href="https://github.com/codero-sus" target="_blank" rel="noopener noreferrer">codero-sus <span aria-hidden="true">↗</span></a>
     </div>
   </header>
@@ -35,7 +45,7 @@
         <div class="eyebrow"><span class="eyebrow-line"></span> YOUR FILE WORKBENCH · 100% IN BROWSER</div>
         <h1>Files, together.<br><em>Backend, nowhere.</em></h1>
         <p>Create a PolyglotMaker bundle or restore one you already have. Files stay in this browser tab—nothing is uploaded to a server.</p>
-        <div class="hero-pills"><span><i>✓</i> No install</span><span><i>✓</i> No network calls</span><span><i>✓</i> Any payload type</span></div>
+        <div class="hero-pills"><span><i>✓</i> No install required</span><span><i>✓</i> No file uploads</span><span><i>✓</i> Any payload type</span></div>
       </div>
       <div class="hero-art" aria-hidden="true">
         <div class="art-orbit art-orbit-a"></div><div class="art-orbit art-orbit-b"></div>
@@ -46,7 +56,7 @@
 
     <div class="privacy-banner">
       <span class="privacy-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg></span>
-      <span class="privacy-copy"><strong>Private by design</strong><small>Processing runs on your device. No upload endpoints, analytics, external scripts, or APIs.</small></span>
+      <span class="privacy-copy"><strong>Private by design</strong><small>Processing runs on your device. No uploads, analytics, external scripts, or remote services.</small></span>
       <span class="privacy-chip">OFFLINE-READY</span>
     </div>
 
@@ -143,6 +153,13 @@
         </div>
       </section>
     </section>
+
+    <dialog id="shortcutDialog" class="shortcut-dialog" aria-labelledby="shortcutDialogTitle">
+      <div class="shortcut-dialog-head"><span><small>LOCAL WORKBENCH</small><h2 id="shortcutDialogTitle">Keyboard shortcuts</h2></span><button id="closeShortcutDialog" type="button" aria-label="Close shortcuts">×</button></div>
+      <div class="shortcut-list"><div><kbd>Alt</kbd> + <kbd>1</kbd><span>Switch to Create</span></div><div><kbd>Alt</kbd> + <kbd>2</kbd><span>Switch to Unpack</span></div><div><kbd>/</kbd><span>Focus the current file filter</span></div><div><kbd>?</kbd><span>Open this shortcut guide</span></div><div><kbd>Esc</kbd><span>Close this guide or clear the active filter</span></div></div>
+      <p>Shortcuts pause while you type in a field. Only preferences are remembered locally; selected files and their contents are never saved.</p>
+      <button id="closeShortcutDialogFooter" class="dialog-close" type="button">Got it</button>
+    </dialog>
 
     <footer class="site-footer" id="credits">
       <div class="footer-message"><span class="footer-mark" aria-hidden="true">✳</span><span><strong>Made with <span class="footer-heart" aria-hidden="true">❤️</span> by <a href="https://github.com/codero-sus" target="_blank" rel="noopener noreferrer">codero-sus</a></strong><small>Author & all project credits</small></span></div>
