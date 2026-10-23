@@ -27,6 +27,8 @@ from .bundle import (
     canonical_json,
     decode_bootstrap,
     _normalized_zip_sha,
+    _read_zip_member_safely,
+    _zip_member_index,
     deobfuscate_bundle,
     new_manifest,
     locate_zip,
@@ -37,7 +39,7 @@ from .bundle import (
 )
 from .detect import Detection, detect, detect_text, format_for_path, guess_host
 from .errors import CorruptContainerError, IncompatibleCombinationError, IntegrityError, NotAPolyglotError, UsageError
-from .util import Segment, guess_mime, resolve_output, safe_member_name, sha256_hex, unique_path, write_bytes
+from .util import Segment, guess_mime, portable_member_key, resolve_output, safe_member_name, sha256_hex, unique_path, write_bytes
 from ..formats.base import EMBED_MEMBERS, HostContext, HostFormat
 from ..formats.registry import REGISTRY
 from ..formats.images import PLGM_MARKER
@@ -104,21 +106,22 @@ def input_from_path(path: str, *, name: str | None = None, role: str = "payload"
 
 
 def _dedupe_inputs(files: Sequence[InputFile]) -> list[InputFile]:
-    seen: dict[str, int] = {}
+    seen: set[str] = set()
     out: list[InputFile] = []
     for item in files:
-        raw = item.name
-        if raw not in seen:
-            seen[raw] = 0
+        raw = safe_member_name(item.name)
+        key = portable_member_key(raw)
+        if key not in seen:
+            seen.add(key)
             out.append(item)
             continue
-        seen[raw] += 1
         stem, ext = os.path.splitext(raw)
-        candidate = f"{stem} ({seen[raw]}){ext}"
-        while candidate in seen:
-            seen[raw] += 1
-            candidate = f"{stem} ({seen[raw]}){ext}"
-        seen[candidate] = 0
+        index = 1
+        candidate = safe_member_name(f"{stem} ({index}){ext}")
+        while portable_member_key(candidate) in seen:
+            index += 1
+            candidate = safe_member_name(f"{stem} ({index}){ext}")
+        seen.add(portable_member_key(candidate))
         cloned = InputFile(candidate, item.data, source=item.source, mtime=item.mtime, mode=item.mode,
                            mime=item.mime, role=item.role)
         out.append(cloned)
@@ -199,7 +202,9 @@ def make_container(
             payload_files.insert(0, host_file)
         else:
             matching_input.role = "host"
+    requested_names = [item.name for item in payload_files]
     payload_files = _dedupe_inputs(payload_files)
+    renamed_names = [(before, after.name) for before, after in zip(requested_names, payload_files) if before != after.name]
 
     if not payload_files and host_file is None:
         raise UsageError("provide at least one input file")
@@ -232,6 +237,12 @@ def make_container(
     if store not in {"zip", "raw"}:
         raise UsageError("store must be zip or raw")
     warnings: list[str] = []
+    if renamed_names:
+        examples = "; ".join(f"{before!r} -> {after!r}" for before, after in renamed_names[:3])
+        remainder = f"; and {len(renamed_names) - 3} more" if len(renamed_names) > 3 else ""
+        warnings.append(
+            f"{len(renamed_names)} payload filename(s) were adjusted to avoid cross-platform path collisions: {examples}{remainder}"
+        )
 
     # Member-container hosts store the original payloads directly as files.
     # They are already self-contained, so no second archive is concatenated.
@@ -484,17 +495,23 @@ def _zip_manifest_from_bytes(data: bytes) -> tuple[dict[str, Any], dict[str, byt
     except (zipfile.BadZipFile, OSError, ValueError):
         return None
     with archive:
+        zip_index = _zip_member_index(archive)
         try:
-            raw = archive.read(MANIFEST_PATH)
+            raw = _read_zip_member_safely(archive, MANIFEST_PATH, zip_index)
         except KeyError:
             return None
         manifest = parse_manifest(raw)
         outputs: dict[str, bytes] = {}
+        portable_names: set[str] = set()
         for record in manifest["files"]:
             name = safe_member_name(str(record.get("name", "")))
+            name_key = portable_member_key(name)
+            if name_key in portable_names:
+                raise CorruptContainerError(f"duplicate or non-portable payload name: {name!r}")
+            portable_names.add(name_key)
             entry = safe_member_name(str(record.get("entry", PAYLOAD_PREFIX + name)))
             try:
-                content = archive.read(entry)
+                content = _read_zip_member_safely(archive, entry, zip_index)
             except KeyError as exc:
                 raise CorruptContainerError(f"payload member missing: {entry}") from exc
             if len(content) != int(record.get("size", -1)):
@@ -508,14 +525,41 @@ def _zip_manifest_from_bytes(data: bytes) -> tuple[dict[str, Any], dict[str, byt
         return manifest, outputs
 
 
+def _tar_member_index(archive: tarfile.TarFile) -> dict[str, list[tarfile.TarInfo]]:
+    """Index safe TAR entries once for bounded-time portable-path lookup."""
+    index: dict[str, list[tarfile.TarInfo]] = {}
+    for member in archive.getmembers():
+        try:
+            key = portable_member_key(safe_member_name(member.name))
+        except ValueError:
+            continue
+        index.setdefault(key, []).append(member)
+    return index
+
+
+def _tar_member_safely(
+    member_name: str,
+    index: dict[str, list[tarfile.TarInfo]],
+) -> tarfile.TarInfo:
+    """Find a TAR member without accepting case/normalization collisions."""
+    wanted = portable_member_key(safe_member_name(member_name))
+    matches = index.get(wanted, [])
+    if not matches:
+        raise KeyError(member_name)
+    if len(matches) != 1:
+        raise CorruptContainerError(f"TAR contains ambiguous portable paths for {member_name!r}")
+    return matches[0]
+
+
 def _tar_manifest_from_bytes(data: bytes) -> tuple[dict[str, Any], dict[str, bytes]] | None:
     try:
         archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:*")
     except (tarfile.TarError, OSError, ValueError):
         return None
     with archive:
+        tar_index = _tar_member_index(archive)
         try:
-            member = archive.getmember(MANIFEST_PATH)
+            member = _tar_member_safely(MANIFEST_PATH, tar_index)
             handle = archive.extractfile(member)
             if handle is None:
                 return None
@@ -523,11 +567,16 @@ def _tar_manifest_from_bytes(data: bytes) -> tuple[dict[str, Any], dict[str, byt
         except (KeyError, tarfile.TarError):
             return None
         outputs: dict[str, bytes] = {}
+        portable_names: set[str] = set()
         for record in manifest["files"]:
             name = safe_member_name(str(record.get("name", "")))
+            name_key = portable_member_key(name)
+            if name_key in portable_names:
+                raise CorruptContainerError(f"duplicate or non-portable payload name: {name!r}")
+            portable_names.add(name_key)
             entry = safe_member_name(str(record.get("entry", PAYLOAD_PREFIX + name)))
             try:
-                member = archive.getmember(entry)
+                member = _tar_member_safely(entry, tar_index)
             except KeyError as exc:
                 raise CorruptContainerError(f"payload member missing: {entry}") from exc
             handle = archive.extractfile(member)

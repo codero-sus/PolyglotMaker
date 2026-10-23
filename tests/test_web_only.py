@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import struct
+import subprocess
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -60,6 +62,7 @@ class BrowserOnlyEditionTests(unittest.TestCase):
             'id="clearPayloads"',
             'id="createProgress"',
             'id="unpackProgress"',
+            'class="skip-link"',
         ):
             self.assertIn(feature, html)
         for feature in (
@@ -75,8 +78,67 @@ class BrowserOnlyEditionTests(unittest.TestCase):
             "AbortController",
             "MAX_VISIBLE_PAYLOADS",
             "MAX_VISIBLE_UNPACKED",
+            "selectMatchesFiles",
+            "invertMatchesFiles",
+            "unpackedZipFilename",
+            "matchingUnpackedIndexes",
+            "unpackedZipStem",
+            "renderRenameNotice",
+            "renamedFiles",
         ):
             self.assertIn(feature, app)
+
+    def test_browser_engine_uses_portable_safe_archive_names(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is not installed")
+        script = r"""
+const engine = require('./web-only/engine.js');
+const input = (name, content) => {
+  const bytes = Buffer.from(content);
+  return { name, type: 'application/octet-stream', size: bytes.length, lastModified: 1700000000000,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+};
+function localNames(bytes) {
+  const zip = Buffer.from(bytes);
+  const names = [];
+  let offset = 0;
+  while (offset + 30 <= zip.length && zip.readUInt32LE(offset) === 0x04034b50) {
+    const size = zip.readUInt32LE(offset + 18);
+    const nameLength = zip.readUInt16LE(offset + 26);
+    const extraLength = zip.readUInt16LE(offset + 28);
+    names.push(zip.subarray(offset + 30, offset + 30 + nameLength).toString('utf8'));
+    offset += 30 + nameLength + extraLength + size;
+  }
+  return names;
+}
+(async () => {
+  const result = await engine.createPolyglot({ payloads: [
+    input('Folder/CON.txt', 'a'), input('folder/_con.TXT', 'b'),
+    input('Cafe\u0301.txt', 'c'), input('Café.txt', 'd'), input('trailing. ', 'e'),
+  ] });
+  const restored = await engine.unpackPolyglot(result.bytes);
+  const zip = await engine.downloadZip([
+    { name: 'Readme.txt', data: Uint8Array.of(1) },
+    { name: 'README.TXT', data: Uint8Array.of(2) },
+  ]);
+  console.log(JSON.stringify({ created: result.files.map((file) => file.name), restored: restored.files.map((file) => file.name), renamed: result.renamedFiles, zip: localNames(zip) }));
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+"""
+        result = subprocess.run(
+            [node, "-e", script], cwd=WEB_ONLY_DIR.parent, check=True, capture_output=True, text=True, timeout=30
+        )
+        output = json.loads(result.stdout)
+        expected = ["Folder/_CON.txt", "folder/_con (1).TXT", "Cafe\u0301.txt", "Café (1).txt", "trailing"]
+        self.assertEqual(output["created"], expected)
+        self.assertEqual(output["restored"], expected)
+        self.assertEqual(output["renamed"], [
+            {"from": "Folder/CON.txt", "to": "Folder/_CON.txt"},
+            {"from": "folder/_con.TXT", "to": "folder/_con (1).TXT"},
+            {"from": "Café.txt", "to": "Café (1).txt"},
+            {"from": "trailing. ", "to": "trailing"},
+        ])
+        self.assertEqual(output["zip"], ["Readme.txt", "README (1).TXT"])
 
     def test_installable_offline_app_shell_uses_local_assets_only(self):
         html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
@@ -108,7 +170,7 @@ class BrowserOnlyEditionTests(unittest.TestCase):
     def test_user_preferences_exclude_selected_file_data(self):
         app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")
         preferences = app.split("function savePreferences()", 1)[1].split("function setTheme", 1)[0]
-        for preference in ("state.theme", "state.payloadSort", "state.unpackedSort", "outputStem", "includeHost"):
+        for preference in ("state.theme", "state.payloadSort", "state.unpackedSort", "unpackedZipStem", "outputStem", "includeHost"):
             self.assertIn(preference, preferences)
         self.assertNotIn("state.payloads", preferences)
         self.assertNotIn("state.unpackedFiles", preferences)
@@ -121,6 +183,8 @@ class BrowserOnlyEditionTests(unittest.TestCase):
         for control in ('id="themeToggle"', 'id="shortcutHelp"', 'id="shortcutDialog"', 'id="installApp"'):
             self.assertIn(control, html)
         self.assertIn(':root[data-theme="dark"]', css)
+        self.assertIn('class="skip-link" href="#mainTools"', html)
+        self.assertIn('id="mainTools" tabindex="-1"', html)
         for feature in ("prefers-color-scheme: dark", "event.altKey", "openShortcutDialog", "Escape", "beforeinstallprompt"):
             self.assertIn(feature, app)
 

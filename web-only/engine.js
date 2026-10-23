@@ -70,13 +70,18 @@
     for (let part of raw.split('/')) {
       if (!part || part === '.') continue;
       if (part === '..') throw new Error(`Unsafe file path: ${input}`);
-      part = part.replace(/[\x00-\x1f<>:"|?*]/g, '_');
-      if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)$/i.test(part)) part = `_${part}`;
+      part = part.replace(/[\x00-\x1f<>:"|?*]/g, '_').replace(/[. ]+$/, '');
+      if (!part) part = '_';
+      if (/^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/i.test(part)) part = `_${part}`;
       parts.push(part.slice(0, 200));
     }
-    const name = parts.join('/').slice(0, 2000);
+    const name = parts.join('/').slice(0, 2000).replace(/[. ]+$/, '');
     if (!name) throw new Error(`Unsafe file path: ${input}`);
     return name;
+  }
+
+  function portableMemberKey(name) {
+    return String(name).normalize('NFC').toLowerCase();
   }
 
   function sortedJson(value) {
@@ -391,7 +396,8 @@
 
   function uniqueName(name, seen) {
     const clean = safeMemberName(name);
-    if (!seen.has(clean)) { seen.add(clean); return clean; }
+    const cleanKey = portableMemberKey(clean);
+    if (!seen.has(cleanKey)) { seen.add(cleanKey); return clean; }
     const slash = clean.lastIndexOf('/');
     const dir = slash >= 0 ? clean.slice(0, slash + 1) : '';
     const base = slash >= 0 ? clean.slice(slash + 1) : clean;
@@ -399,9 +405,9 @@
     const stem = dot > 0 ? base.slice(0, dot) : base;
     const ext = dot > 0 ? base.slice(dot) : '';
     let n = 1;
-    let candidate = `${dir}${stem} (${n})${ext}`;
-    while (seen.has(candidate)) candidate = `${dir}${stem} (${++n})${ext}`;
-    seen.add(candidate);
+    let candidate = safeMemberName(`${dir}${stem} (${n})${ext}`);
+    while (seen.has(portableMemberKey(candidate))) candidate = safeMemberName(`${dir}${stem} (${++n})${ext}`);
+    seen.add(portableMemberKey(candidate));
     return candidate;
   }
 
@@ -437,11 +443,14 @@
     if (hostAndPayloadSize > MAX_BYTES) throw new Error(`Selected data exceeds the ${Math.round(MAX_BYTES / 1024 / 1024)} MiB browser limit.`);
 
     const files = [];
+    const renamedFiles = [];
     for (let index = 0; index < inputs.length; index += 1) {
       throwIfAborted(signal);
       const input = inputs[index];
+      const requestedName = input.file.webkitRelativePath || input.file.name || 'payload.bin';
       const file = await readInput(input.file, input.role === 'host' && input.file === hostFile ? hostBytes : null);
       file.name = uniqueName(file.name, seen);
+      if (file.name !== requestedName) renamedFiles.push({ from: String(requestedName), to: file.name });
       file.role = input.role;
       files.push(file);
       reportProgress(onProgress, 4 + (index + 1) / inputs.length * 10, `Reading ${file.name}…`);
@@ -520,6 +529,7 @@
       totalBytes: bytes.length,
       bundleSha256: bundle.bundleSha256,
       files: records.map(({ name, size, sha256: digest, mime, role }) => ({ name, size, sha256: digest, mime, role })),
+      renamedFiles,
     };
   }
 
@@ -716,17 +726,23 @@
     if (!Number.isSafeInteger(declaredTotal) || declaredTotal < 0 || declaredTotal > MAX_BYTES) throw new Error('The payload set exceeds the browser-only extraction size limit.');
 
     const files = [];
+    const renamedFiles = [];
     const seen = new Set();
+    const seenEntries = new Set();
     let completedBytes = 0;
     for (let index = 0; index < manifest.files.length; index += 1) {
       throwIfAborted(signal);
       const record = manifest.files[index];
-      const name = safeMemberName(record.name);
+      const requestedName = String(record.name || '');
+      const originalName = safeMemberName(requestedName);
+      const name = uniqueName(originalName, seen);
+      if (name !== requestedName) renamedFiles.push({ from: requestedName, to: name });
       const expectedDigest = String(record.sha256 || '');
       if (!/^[0-9a-f]{64}$/i.test(expectedDigest)) throw new Error(`A valid SHA-256 digest is missing for ${name}.`);
-      if (seen.has(name)) throw new Error(`The manifest contains duplicate filenames: ${name}`);
-      seen.add(name);
-      const entryName = safeMemberName(record.entry || `${PAYLOAD_PREFIX}${name}`);
+      const entryName = safeMemberName(record.entry || `${PAYLOAD_PREFIX}${originalName}`);
+      const entryKey = portableMemberKey(entryName);
+      if (!entryName.startsWith(PAYLOAD_PREFIX) || seenEntries.has(entryKey)) throw new Error(`The manifest points multiple files at an unsafe or repeated ZIP entry: ${entryName}`);
+      seenEntries.add(entryKey);
       const zipEntry = entries.get(entryName);
       if (!zipEntry) throw new Error(`Payload data is missing: ${name}`);
       if (Number(record.size) !== zipEntry.size) throw new Error(`Manifest size does not match for ${name}.`);
@@ -763,11 +779,13 @@
       files,
       source: archive.footer ? 'ZIP bundle · integrity footer verified' : 'ZIP bundle · payload checks verified',
       bundleSha256: archive.footer ? toHex(archive.footer.archiveHash) : null,
+      renamedFiles,
     };
   }
 
   async function downloadZip(files, { onProgress, signal } = {}) {
-    const entries = files.map((file) => ({ name: safeMemberName(file.name), data: file.data, mtime: Date.now() / 1000, mode: 0o644 }));
+    const seen = new Set();
+    const entries = files.map((file) => ({ name: uniqueName(file.name, seen), data: file.data, mtime: Date.now() / 1000, mode: 0o644 }));
     const result = await buildStoredZip(entries, {
       signal,
       onProgress: (percent, name) => reportProgress(onProgress, percent, `Packing ${name}…`),

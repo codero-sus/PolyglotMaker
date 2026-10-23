@@ -11,10 +11,10 @@ Open `index.html` directly in a current browser, or place the whole `web-only` f
 - Add individual files or whole folders; folder-relative paths are kept inside the bundle.
 - Create an appended, uncompressed ZIP bundle with a PolyglotMaker v1 manifest and integrity footer.
 - Use a built-in valid 1×1 PNG shell, or append the bundle to a host file you choose.
-- Keep arbitrary payload bytes intact, with SHA-256 checksums and safe member names.
+- Keep arbitrary payload bytes intact, with SHA-256 checksums and safe member names. Archive paths are cleaned for Windows device names and trailing-dot/space rules; conflicting paths are disambiguated across case-insensitive and Unicode-normalizing filesystems, with any renamed paths shown before download.
 - Unpack appended ZIP bundles created by this edition or by PolyglotMaker's normal ZIP/append mode. Search restored names, select the files you want, save files individually, or build a ZIP of the selection.
 - Search and sort large payload/restored-file lists by name, MIME type, or size without flooding the page; at most 150 matching rows render at once.
-- Choose a safe output filename, see an estimated size/file-count budget, and use bulk select, clear, or invert controls for restored files.
+- Choose safe output filenames for new bundles and restored ZIPs, see an estimated size/file-count budget, and use select-all, select-matches, clear, and invert controls for restored files. The selection summary includes selected bytes and current match count.
 - Copy bundle and per-file SHA-256 digests, or save a JSON verification report containing file metadata (never file contents).
 - See live progress for long operations and cancel a build, restore, or ZIP export in progress.
 

@@ -3,21 +3,34 @@ from __future__ import annotations
 import io
 import json
 import os
+import tarfile
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 
-from polyglotmaker.core.bundle import InputFile, decode_bootstrap, validate_zip_bundle
+from polyglotmaker.core.bundle import (
+    InputFile,
+    MANIFEST_PATH,
+    PAYLOAD_PREFIX,
+    build_raw_bundle,
+    build_zip_bundle,
+    canonical_json,
+    decode_bootstrap,
+    new_manifest,
+    parse_raw_bundle,
+    validate_zip_bundle,
+)
 from polyglotmaker.core.container import (
     inspect_bytes,
     make_container,
     unpack_bytes,
     unpack_file,
     verify_bytes,
+    _tar_manifest_from_bytes,
 )
 from polyglotmaker.core.detect import format_for_path
-from polyglotmaker.core.errors import IncompatibleCombinationError, ObfuscationKeyError
+from polyglotmaker.core.errors import CorruptContainerError, IncompatibleCombinationError, ObfuscationKeyError
 from polyglotmaker.core.util import safe_member_name
 from polyglotmaker.formats import REGISTRY
 
@@ -162,6 +175,76 @@ class PolyglotRoundTripTests(unittest.TestCase):
         result = make_container([self.payload, second], host="png")
         restored = unpack_bytes(result.data, selected=["second.dat"])
         self.assertEqual(restored.files, {"second.dat": b"other"})
+
+    def test_archive_names_are_safe_on_windows_and_macos(self):
+        self.assertEqual(safe_member_name("folder/CON.txt"), "folder/_CON.txt")
+        self.assertEqual(safe_member_name("folder/LPT1.log"), "folder/_LPT1.log")
+        self.assertEqual(safe_member_name("folder/trailing. "), "folder/trailing")
+        self.assertEqual(safe_member_name("folder/a:b?.bin"), "folder/a_b_.bin")
+
+    def test_duplicate_payload_paths_are_deduped_portably(self):
+        import unicodedata
+        from polyglotmaker.core.util import portable_member_key
+
+        payloads = [
+            InputFile("Docs/Readme.txt", b"upper"),
+            InputFile("docs/readme.TXT", b"lower"),
+            InputFile("Cafe\u0301.txt", b"decomposed"),
+            InputFile("Café.txt", b"composed"),
+        ]
+        result = make_container(payloads, host="png")
+        self.assertTrue(any("cross-platform path collisions" in warning for warning in result.warnings))
+        names = [record["name"] for record in result.manifest["files"]]
+        portable_names = [portable_member_key(name) for name in names]
+        self.assertEqual(len(portable_names), len(set(portable_names)))
+        self.assertEqual(names[0], "Docs/Readme.txt")
+        self.assertEqual(names[1], "docs/readme (1).TXT")
+        self.assertEqual(names[2], "Cafe\u0301.txt")
+        self.assertEqual(names[3], "Café (1).txt")
+        restored = unpack_bytes(result.data).files
+        self.assertEqual(restored[names[0]], b"upper")
+        self.assertEqual(restored[names[1]], b"lower")
+        self.assertEqual(restored[names[2]], b"decomposed")
+        self.assertEqual(restored[names[3]], b"composed")
+        self.assertEqual(unicodedata.normalize("NFC", names[2]), names[3].removesuffix(" (1).txt") + ".txt")
+
+    def test_zip_validator_rejects_ambiguous_portable_paths(self):
+        files = [InputFile("Readme.txt", b"one"), InputFile("README.TXT", b"two")]
+        manifest = new_manifest(files, host="png")
+        data, _, _ = build_zip_bundle(manifest, files)
+        with self.assertRaisesRegex(CorruptContainerError, "non-portable|ambiguous portable paths"):
+            validate_zip_bundle(data)
+
+    def test_raw_parser_rejects_ambiguous_portable_paths(self):
+        files = [InputFile("Readme.txt", b"one"), InputFile("README.TXT", b"two")]
+        manifest = new_manifest(files, host="png", store="raw")
+        data = build_raw_bundle(manifest, files)
+        with self.assertRaisesRegex(CorruptContainerError, "non-portable"):
+            parse_raw_bundle(data)
+
+    def test_tar_manifest_reader_rejects_ambiguous_portable_paths(self):
+        files = [InputFile("Readme.txt", b"one"), InputFile("README.TXT", b"two")]
+        manifest = new_manifest(files, host="tar")
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            manifest_bytes = canonical_json(manifest)
+            manifest_info = tarfile.TarInfo(MANIFEST_PATH)
+            manifest_info.size = len(manifest_bytes)
+            archive.addfile(manifest_info, io.BytesIO(manifest_bytes))
+            for item in files:
+                info = tarfile.TarInfo(PAYLOAD_PREFIX + item.name)
+                info.size = len(item.data)
+                archive.addfile(info, io.BytesIO(item.data))
+        with self.assertRaisesRegex(CorruptContainerError, "ambiguous portable paths|non-portable"):
+            _tar_manifest_from_bytes(buffer.getvalue())
+
+    def test_thousand_member_bundle_restores_with_portable_path_index(self):
+        files = [InputFile(f"batch/item-{index:04}.bin", index.to_bytes(4, "little")) for index in range(1000)]
+        result = make_container(files, host="png")
+        restored = unpack_bytes(result.data).files
+        self.assertEqual(len(restored), 1000)
+        self.assertEqual(restored["batch/item-0000.bin"], (0).to_bytes(4, "little"))
+        self.assertEqual(restored["batch/item-0999.bin"], (999).to_bytes(4, "little"))
 
     def test_output_dir_restore(self):
         result = make_container([self.payload], host="png")

@@ -22,7 +22,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Iterable, Mapping, Sequence
 
 from .errors import CorruptContainerError, IntegrityError, ObfuscationKeyError
-from .util import dos_datetime, guess_mime, safe_member_name, sha256_hex, xor_stream
+from .util import dos_datetime, guess_mime, portable_member_key, safe_member_name, sha256_hex, xor_stream
 
 MANIFEST_PATH = "POLYGLOTMAKER/manifest.json"
 PAYLOAD_PREFIX = "payloads/"
@@ -263,6 +263,33 @@ def decode_bootstrap(data: bytes) -> Bootstrap | None:
     return Bootstrap(offset, length, manifest_hash, archive_hash, flags, version)
 
 
+def _zip_member_index(archive: zipfile.ZipFile) -> dict[str, list[zipfile.ZipInfo]]:
+    """Index safe ZIP entries once for bounded-time portable-path lookup."""
+    index: dict[str, list[zipfile.ZipInfo]] = {}
+    for info in archive.infolist():
+        try:
+            key = portable_member_key(safe_member_name(info.filename))
+        except ValueError:
+            continue
+        index.setdefault(key, []).append(info)
+    return index
+
+
+def _read_zip_member_safely(
+    archive: zipfile.ZipFile,
+    member_name: str,
+    index: dict[str, list[zipfile.ZipInfo]],
+) -> bytes:
+    """Read one ZIP member while rejecting filesystem-equivalent collisions."""
+    wanted = portable_member_key(safe_member_name(member_name))
+    matches = index.get(wanted, [])
+    if not matches:
+        raise KeyError(member_name)
+    if len(matches) != 1:
+        raise CorruptContainerError(f"ZIP contains ambiguous portable paths for {member_name!r}")
+    return archive.read(matches[0])
+
+
 def validate_zip_bundle(data: bytes, *, verify_footer: bool = True) -> tuple[dict[str, Any], dict[str, bytes], Bootstrap | None]:
     """Open a prefix-tolerant ZIP, validate manifest and file hashes."""
     try:
@@ -270,8 +297,9 @@ def validate_zip_bundle(data: bytes, *, verify_footer: bool = True) -> tuple[dic
     except (zipfile.BadZipFile, OSError, ValueError) as exc:
         raise CorruptContainerError(f"not a readable ZIP bundle: {exc}") from exc
     with archive:
+        zip_index = _zip_member_index(archive)
         try:
-            manifest_raw = archive.read(MANIFEST_PATH)
+            manifest_raw = _read_zip_member_safely(archive, MANIFEST_PATH, zip_index)
         except KeyError as exc:
             raise CorruptContainerError("ZIP archive has no PolyglotMaker manifest") from exc
         manifest = parse_manifest(manifest_raw)
@@ -289,13 +317,18 @@ def validate_zip_bundle(data: bytes, *, verify_footer: bool = True) -> tuple[dic
             if _normalized_zip_sha(data[start:start + length]) != footer.archive_sha256:
                 raise IntegrityError("ZIP bundle SHA-256 does not match bootstrap footer")
         outputs: dict[str, bytes] = {}
+        portable_names: set[str] = set()
         for record in manifest["files"]:
             if not isinstance(record, dict):
                 raise CorruptContainerError("malformed file record in manifest")
             name = safe_member_name(str(record.get("name", "")))
+            name_key = portable_member_key(name)
+            if name_key in portable_names:
+                raise CorruptContainerError(f"duplicate or non-portable output name in manifest: {name!r}")
+            portable_names.add(name_key)
             entry = safe_member_name(str(record.get("entry", PAYLOAD_PREFIX + name)))
             try:
-                content = archive.read(entry)
+                content = _read_zip_member_safely(archive, entry, zip_index)
             except KeyError as exc:
                 raise CorruptContainerError(f"payload member missing: {entry}") from exc
             if len(content) != int(record.get("size", -1)):
@@ -351,6 +384,7 @@ def parse_raw_bundle(data: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
     if count > 100000:
         raise CorruptContainerError("unreasonable raw record count")
     outputs = {}
+    portable_names: set[str] = set()
     for _ in range(count):
         if pos + 54 > len(data):
             raise CorruptContainerError("truncated raw record header")
@@ -363,6 +397,10 @@ def parse_raw_bundle(data: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
         if name_len > 4096 or name_len > len(data) - pos:
             raise CorruptContainerError("invalid raw member name length")
         name = safe_member_name(data[pos:pos + name_len].decode("utf-8", "replace"))
+        name_key = portable_member_key(name)
+        if name_key in portable_names:
+            raise CorruptContainerError(f"duplicate or non-portable raw member name: {name!r}")
+        portable_names.add(name_key)
         pos += name_len
         if size > len(data) - pos:
             raise CorruptContainerError(f"truncated raw payload {name!r}")

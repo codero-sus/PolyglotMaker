@@ -16,6 +16,7 @@ import os
 import re
 import struct
 import time
+import unicodedata
 import zlib
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Iterator, Sequence
@@ -260,26 +261,35 @@ def b64_decode(text: str | bytes) -> bytes:
 # --------------------------------------------------------------------------
 
 
+def portable_member_key(name: str) -> str:
+    """Return the cross-platform collision key used for archive member names."""
+    return unicodedata.normalize("NFC", str(name)).lower()
+
+
 def safe_member_name(name: str) -> str:
-    """Normalise an untrusted archive member name (zip-slip protection)."""
-    raw = name.strip()
+    """Normalize an untrusted archive path for ZIP-slip and Windows safety."""
+    raw = str(name).strip()
     if raw.startswith(("/", chr(92))) or re.match(r"^[A-Za-z]:", raw):
         raise ValueError(f"unsafe absolute member name: {name!r}")
-    name = raw.replace("\\", "/")
+    normalized = raw.replace("\\", "/")
     parts: list[str] = []
-    for part in name.split("/"):
+    for part in normalized.split("/"):
         if not part or part == ".":
             continue
         if part == "..":
-            raise ValueError(f"unsafe member name (path traversal): {name!r}")
-        part = re.sub(r"[\x00-\x1f]", "_", part)
-        part = re.sub(r'[<>:"|?*]', "_", part)
-        if part in {"CON", "PRN", "AUX", "NUL"} or re.match(r"^(COM|LPT)\d$", part):
+            raise ValueError(f"unsafe member name (path traversal): {normalized!r}")
+        part = re.sub(r"[\x00-\x1f<>:\"|?*]", "_", part).rstrip(". ")
+        if not part:
+            part = "_"
+        if re.match(r"^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$", part, re.IGNORECASE):
             part = "_" + part
         parts.append(part[:200])
     if not parts:
         raise ValueError(f"unsafe member name: {name!r}")
-    return "/".join(parts)[:2000]
+    safe_name = "/".join(parts)[:2000].rstrip(". ")
+    if not safe_name:
+        raise ValueError(f"unsafe member name: {name!r}")
+    return safe_name
 
 
 def resolve_output(root: str, name: str) -> str:
@@ -305,20 +315,21 @@ def unique_path(path: str) -> str:
 
 
 def dedupe_names(names: Iterable[str]) -> list[str]:
-    """Make a list of member names unique without losing any of them."""
-    seen: dict[str, int] = {}
+    """Make portable archive paths unique without losing any of them."""
+    seen: set[str] = set()
     out: list[str] = []
     for raw in names:
-        name = raw
-        if name in seen:
-            seen[raw] += 1
-            stem, ext = os.path.splitext(raw)
-            name = f"{stem} ({seen[raw]}){ext}"
-            while name in seen:
-                seen[raw] += 1
-                name = f"{stem} ({seen[raw]}){ext}"
+        clean = safe_member_name(raw)
+        if portable_member_key(clean) not in seen:
+            name = clean
         else:
-            seen[raw] = 0
+            stem, ext = os.path.splitext(clean)
+            index = 1
+            name = safe_member_name(f"{stem} ({index}){ext}")
+            while portable_member_key(name) in seen:
+                index += 1
+                name = safe_member_name(f"{stem} ({index}){ext}")
+        seen.add(portable_member_key(name))
         out.append(name)
     return out
 

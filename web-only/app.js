@@ -13,6 +13,7 @@
     selectedUnpacked: new Set(),
     unpackedSearch: '',
     unpackedSort: 'name-asc',
+    unpackedZipStem: '',
     unpackSource: '',
     unpackBundleSha256: null,
     toastTimer: 0,
@@ -133,6 +134,7 @@
         theme: state.theme,
         payloadSort: state.payloadSort,
         unpackedSort: state.unpackedSort,
+        unpackedZipStem: state.unpackedZipStem,
         outputStem: $('#outputFilename').value,
         includeHost: $('#includeHost').checked,
       }));
@@ -162,6 +164,7 @@
     state.themePinned = savedTheme;
     state.payloadSort = SORT_OPTIONS.has(preferences.payloadSort) ? preferences.payloadSort : 'name-asc';
     state.unpackedSort = SORT_OPTIONS.has(preferences.unpackedSort) ? preferences.unpackedSort : 'name-asc';
+    state.unpackedZipStem = typeof preferences.unpackedZipStem === 'string' ? preferences.unpackedZipStem.slice(0, 100) : '';
     if (typeof preferences.outputStem === 'string') $('#outputFilename').value = preferences.outputStem.slice(0, 100);
     if (typeof preferences.includeHost === 'boolean') $('#includeHost').checked = preferences.includeHost;
     $('#payloadSort').value = state.payloadSort;
@@ -175,6 +178,13 @@
     toast.classList.add('visible');
     clearTimeout(state.toastTimer);
     state.toastTimer = setTimeout(() => toast.classList.remove('visible'), 3400);
+  }
+
+  function renderRenameNotice(renamedFiles) {
+    if (!renamedFiles?.length) return '';
+    const examples = renamedFiles.slice(0, 4).map(({ from, to }) => `<li><code>${escapeHtml(from)}</code><span aria-hidden="true">→</span><code>${escapeHtml(to)}</code></li>`).join('');
+    const more = renamedFiles.length > 4 ? `<small>and ${renamedFiles.length - 4} more</small>` : '';
+    return `<div class="result-warning filename-warning" role="status"><strong>${renamedFiles.length} filename${renamedFiles.length === 1 ? '' : 's'} adjusted</strong><p>Names were made portable across Windows, macOS, and Linux; file bytes are unchanged.</p><ul>${examples}</ul>${more}</div>`;
   }
 
   function setBusy(button, label) {
@@ -469,7 +479,7 @@
       };
       const output = $('#createResult');
       output.hidden = false;
-      output.innerHTML = `<div class="result-summary"><span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(result.totalBytes)} · ${escapeHtml(result.host.toUpperCase())} host</small></span></div><div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div><div class="result-actions"><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(finalName)}">Download ${escapeHtml(finalName)} <span aria-hidden="true">↓</span></a><button class="report-download" type="button" data-create-report>Save report</button></div>`;
+      output.innerHTML = `<div class="result-summary"><span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(result.totalBytes)} · ${escapeHtml(result.host.toUpperCase())} host</small></span></div>${renderRenameNotice(result.renamedFiles)}<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div><div class="result-actions"><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(finalName)}">Download ${escapeHtml(finalName)} <span aria-hidden="true">↓</span></a><button class="report-download" type="button" data-create-report>Save report</button></div>`;
       output.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
       notify('Container created. Your files stayed on this device.');
     } catch (error) {
@@ -483,11 +493,16 @@
     }
   }
 
-  function unpackFilename(name) {
-    const base = String(name || 'polyglot').replace(/\\/g, '/').split('/').pop();
+  function unpackFilenameStem(name) {
+    const base = normalizePath(name || 'polyglot').split('/').pop();
     const dot = base.lastIndexOf('.');
     const stem = dot > 0 ? base.slice(0, dot) : base;
-    return `${stem || 'polyglot'}-unpacked.zip`;
+    return `${stem || 'polyglot'}-unpacked`;
+  }
+
+  function unpackFilename(name, selectedStem = '') {
+    const fallbackStem = unpackFilenameStem(name);
+    return outputFilename(selectedStem || fallbackStem, `${fallbackStem}.zip`);
   }
 
   function updateUnpackedSelection() {
@@ -503,26 +518,35 @@
     selectAll.indeterminate = selected > 0 && selected < total;
     selectAll.disabled = busy;
     $('#selectNoneFiles', target).disabled = busy;
+    $('#selectMatchesFiles', target).disabled = busy;
+    $('#invertMatchesFiles', target).disabled = busy;
     $('#invertFiles', target).disabled = busy;
     $('#unpackedSearch', target).disabled = busy;
     $('#unpackedSort', target).disabled = busy;
     $$('[data-file-select]', target).forEach((checkbox) => { checkbox.disabled = busy; });
-    summary.textContent = `${selected} of ${total} selected`;
+    const selectedBytes = [...state.selectedUnpacked].reduce((sum, index) => sum + (state.unpackedFiles[index]?.size || 0), 0);
+    const matchCount = matchingUnpackedIndexes().length;
+    summary.textContent = `${selected} of ${total} selected · ${prettyBytes(selectedBytes)} · ${matchCount} match${matchCount === 1 ? '' : 'es'}`;
     button.disabled = selected === 0 || busy;
     button.textContent = selected === total
       ? `Download all as ZIP (${selected}) ↓`
       : `Download selected as ZIP (${selected}) ↓`;
   }
 
+  function matchingUnpackedIndexes() {
+    const query = state.unpackedSearch.trim().toLocaleLowerCase();
+    const matches = [];
+    state.unpackedFiles.forEach((file, index) => {
+      const searchable = `${file.name} ${file.mime || ''}`.toLocaleLowerCase();
+      if (!query || searchable.includes(query)) matches.push(index);
+    });
+    return matches;
+  }
+
   function renderUnpackedRows() {
     const target = $('#unpackResult');
     const results = $('.file-results', target);
-    const query = state.unpackedSearch.trim().toLocaleLowerCase();
-    const matching = [];
-    state.unpackedFiles.forEach((file, index) => {
-      const searchable = `${file.name} ${file.mime || ''}`.toLocaleLowerCase();
-      if (!query || searchable.includes(query)) matching.push({ file, index });
-    });
+    const matching = matchingUnpackedIndexes().map((index) => ({ file: state.unpackedFiles[index], index }));
     matching.sort((left, right) => compareFileRows(left, right, state.unpackedSort, (file) => file.name));
     const visible = matching.slice(0, MAX_VISIBLE_UNPACKED);
     if (!visible.length) {
@@ -551,8 +575,8 @@
     state.unpackBundleSha256 = result.bundleSha256 || null;
     const total = result.files.reduce((sum, item) => sum + item.size, 0);
     target.hidden = false;
-    target.innerHTML = `<div class="unpacked-result-head"><div class="unpack-success"><span class="success-check" aria-hidden="true">✓</span><span><strong>${result.files.length} file${result.files.length === 1 ? '' : 's'} verified</strong><small>${prettyBytes(total)} total · ${escapeHtml(result.source)}</small></span></div><div class="unpacked-result-actions"><button class="report-download" id="downloadReport" type="button">Save verification report</button><button class="download-all" id="downloadSelectedZip" type="button">Download all as ZIP (${result.files.length}) ↓</button></div></div>${result.bundleSha256 ? `<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div>` : ''}
-      <div class="unpacked-tools"><div class="selection-controls"><label class="select-all-control"><input id="selectAllFiles" type="checkbox" checked> Select all</label><button id="selectNoneFiles" type="button">None</button><button id="invertFiles" type="button">Invert</button></div><span class="selection-summary" id="selectionSummary">${result.files.length} of ${result.files.length} selected</span><input class="unpacked-search" id="unpackedSearch" type="search" placeholder="Filter names or MIME types…" aria-label="Filter restored files by name or type"><select id="unpackedSort" class="sort-select" aria-label="Sort restored files"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="size-asc">Smallest</option><option value="size-desc">Largest</option></select></div>
+    target.innerHTML = `<div class="unpacked-result-head"><div class="unpack-success"><span class="success-check" aria-hidden="true">✓</span><span><strong>${result.files.length} file${result.files.length === 1 ? '' : 's'} verified</strong><small>${prettyBytes(total)} total · ${escapeHtml(result.source)}</small></span></div><div class="unpacked-result-actions"><label class="unpacked-output-name" for="unpackedZipFilename"><span>ZIP filename</span><span class="unpacked-output-field"><input id="unpackedZipFilename" type="text" value="${escapeHtml(state.unpackedZipStem || unpackFilenameStem(state.containerFile?.name))}" maxlength="100" autocomplete="off" spellcheck="false" aria-label="ZIP download filename"><small>.zip</small></span></label><button class="report-download" id="downloadReport" type="button">Save verification report</button><button class="download-all" id="downloadSelectedZip" type="button">Download all as ZIP (${result.files.length}) ↓</button></div></div>${renderRenameNotice(result.renamedFiles)}${result.bundleSha256 ? `<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div>` : ''}
+      <div class="unpacked-tools"><div class="selection-controls"><label class="select-all-control"><input id="selectAllFiles" type="checkbox" checked> Select all</label><button id="selectMatchesFiles" type="button">Select matches</button><button id="selectNoneFiles" type="button">None</button><button id="invertMatchesFiles" type="button">Invert matches</button><button id="invertFiles" type="button">Invert all</button></div><span class="selection-summary" id="selectionSummary" aria-live="polite" aria-atomic="true">${result.files.length} of ${result.files.length} selected</span><input class="unpacked-search" id="unpackedSearch" type="search" placeholder="Filter names or MIME types…" aria-label="Filter restored files by name or type"><select id="unpackedSort" class="sort-select" aria-label="Sort restored files"><option value="name-asc">Name A–Z</option><option value="name-desc">Name Z–A</option><option value="size-asc">Smallest</option><option value="size-desc">Largest</option></select></div>
       <div class="file-results"></div>`;
     $('#unpackedSort', target).value = state.unpackedSort;
     renderUnpackedRows();
@@ -576,7 +600,7 @@
         onProgress: (progress) => updateProgress('unpackProgress', progress),
       });
       if (controller.signal.aborted) throw Object.assign(new Error('Operation cancelled.'), { name: 'AbortError' });
-      clickDownload(new Blob([zipBytes], { type: 'application/zip' }), unpackFilename(state.containerFile?.name));
+      clickDownload(new Blob([zipBytes], { type: 'application/zip' }), unpackFilename(state.containerFile?.name, $('#unpackedZipFilename')?.value || ''));
       notify(`${files.length} file${files.length === 1 ? '' : 's'} added to the ZIP download.`);
     } catch (error) {
       if (error.name === 'AbortError') notify('ZIP creation cancelled.');
@@ -811,6 +835,10 @@
     });
     $('#unpackResult').addEventListener('input', (event) => {
       if (event.target.id === 'unpackedSearch') filterUnpackedFiles();
+      else if (event.target.id === 'unpackedZipFilename') {
+        state.unpackedZipStem = event.target.value.slice(0, 100);
+        savePreferences();
+      }
     });
     $('#unpackResult').addEventListener('click', (event) => {
       const saveButton = event.target.closest('[data-save]');
@@ -822,8 +850,21 @@
         const file = state.unpackedFiles[Number(hashButton.dataset.copyHash)];
         if (file) copyText(file.sha256, 'File SHA-256');
       }
+      if (event.target.closest('#selectMatchesFiles')) {
+        for (const index of matchingUnpackedIndexes()) state.selectedUnpacked.add(index);
+        renderUnpackedRows();
+        updateUnpackedSelection();
+      }
       if (event.target.closest('#selectNoneFiles')) {
         state.selectedUnpacked.clear();
+        renderUnpackedRows();
+        updateUnpackedSelection();
+      }
+      if (event.target.closest('#invertMatchesFiles')) {
+        for (const index of matchingUnpackedIndexes()) {
+          if (state.selectedUnpacked.has(index)) state.selectedUnpacked.delete(index);
+          else state.selectedUnpacked.add(index);
+        }
         renderUnpackedRows();
         updateUnpackedSelection();
       }

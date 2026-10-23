@@ -9,7 +9,7 @@ PolyglotMaker is intended for legitimate file aggregation, single-file distribut
 - `--obfuscate` is SHA-256 counter-stream XOR. It is deliberately labeled **obfuscation, not encryption**; a motivated analyst can recover the bytes. Do not use it for confidentiality.
 - Real file formats can have parser-specific edge cases. Inspect output and test it in the intended viewer before distributing it.
 - The browser UI accepts same-origin uploads to the local process and holds generated download bytes in process memory temporarily. Do not expose the web server to an untrusted network.
-- Unpack rejects absolute paths, traversal components (`..`), control characters, and platform-reserved path components. It does not overwrite existing files by default.
+- Archive member names reject absolute paths and traversal components (`..`), replace unsafe characters, prefix Windows device names even when followed by extensions, and trim trailing dots/spaces. Build inputs that collide by case or Unicode normalization are renamed without changing file bytes; ambiguous external ZIP, TAR, or raw paths are rejected. Unpack does not overwrite existing files by default.
 - Keep malware research in isolated, authorized environments. Scan and review files under your organization's policies.
 
 ## Responsible-use note
