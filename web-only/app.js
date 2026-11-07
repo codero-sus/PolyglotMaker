@@ -19,6 +19,10 @@
     toastTimer: 0,
     createUrl: null,
     createResult: null,
+    outputBlob: null,
+    outputPreviewPage: 0,
+    outputPreviewText: '',
+    outputPreviewSequence: 0,
     createController: null,
     unpackController: null,
     zipController: null,
@@ -30,6 +34,9 @@
   const MAX_FILES = window.PolyglotEngine?.MAX_FILES || 10000;
   const MAX_VISIBLE_PAYLOADS = 150;
   const MAX_VISIBLE_UNPACKED = 150;
+  const OUTPUT_CHUNK_SIZES = new Set([12 * 1024, 48 * 1024, 192 * 1024]);
+  const DEFAULT_OUTPUT_CHUNK_SIZE = 12 * 1024;
+  const MAX_OUTPUT_COPY_BYTES = 16 * 1024;
   const PREFERENCES_KEY = 'polyglotmaker-web-only-preferences-v1';
   const SORT_OPTIONS = new Set(['name-asc', 'name-desc', 'size-asc', 'size-desc']);
 
@@ -187,6 +194,22 @@
     return `<div class="result-warning filename-warning" role="status"><strong>${renamedFiles.length} filename${renamedFiles.length === 1 ? '' : 's'} adjusted</strong><p>Names were made portable across Windows, macOS, and Linux; file bytes are unchanged.</p><ul>${examples}</ul>${more}</div>`;
   }
 
+  function renderOutputInspector() {
+    return `<details class="output-inspector" open>
+      <summary><span>Inspect / copy output bytes</span><small>Base64 is compact · hex uses 2 characters per byte</small></summary>
+      <div class="output-inspector-content">
+        <div class="output-inspector-toolbar">
+          <label class="output-control" for="outputViewFormat">Representation<select id="outputViewFormat"><option value="base64">Base64 (compact)</option><option value="hex">Hexadecimal</option></select></label>
+          <label class="output-control" for="outputChunkSize">Chunk size<select id="outputChunkSize"><option value="12288">12 KiB</option><option value="49152">48 KiB</option><option value="196608">192 KiB</option></select></label>
+          <div class="output-inspector-paging"><button id="outputPreviousChunk" type="button" disabled>← Previous</button><span id="outputChunkLabel" aria-live="polite">Preparing…</span><button id="outputNextChunk" type="button" disabled>Next →</button></div>
+        </div>
+        <div class="output-representation-meta"><span id="outputEncodedSize"></span><span id="outputViewHint"></span></div>
+        <pre id="outputPreview" class="output-preview" tabindex="0" aria-label="Encoded output byte preview">Preparing this output chunk…</pre>
+        <div class="output-inspector-actions"><button id="copyOutputChunk" class="report-download" type="button" disabled>Copy this page</button><button id="copyOutputAll" class="report-download" type="button" disabled>Copy whole output</button><span id="outputCopyLimit"></span></div>
+      </div>
+    </details>`;
+  }
+
   function setBusy(button, label) {
     const original = button.dataset.original || button.innerHTML;
     button.dataset.original = original;
@@ -214,10 +237,91 @@
 
   function clearCreateResult() {
     state.createController?.abort();
-    $('#createResult').hidden = true;
+    state.outputPreviewSequence += 1;
+    state.outputBlob = null;
+    state.outputPreviewPage = 0;
+    state.outputPreviewText = '';
+    const output = $('#createResult');
+    output.hidden = true;
+    output.replaceChildren();
     if (state.createUrl) URL.revokeObjectURL(state.createUrl);
     state.createUrl = null;
     state.createResult = null;
+  }
+
+  async function updateOutputPreview() {
+    const blob = state.outputBlob;
+    const preview = $('#outputPreview');
+    if (!blob || !preview) return;
+
+    const format = $('#outputViewFormat').value === 'hex' ? 'hex' : 'base64';
+    const selectedChunkSize = Number($('#outputChunkSize').value);
+    const chunkSize = OUTPUT_CHUNK_SIZES.has(selectedChunkSize) ? selectedChunkSize : DEFAULT_OUTPUT_CHUNK_SIZE;
+    const pageCount = Math.max(1, Math.ceil(blob.size / chunkSize));
+    state.outputPreviewPage = Math.max(0, Math.min(state.outputPreviewPage, pageCount - 1));
+    const page = state.outputPreviewPage;
+    const start = page * chunkSize;
+    const end = Math.min(blob.size, start + chunkSize);
+    const sequence = ++state.outputPreviewSequence;
+    state.outputPreviewText = '';
+    preview.textContent = 'Preparing this output chunk…';
+    $('#copyOutputChunk').disabled = true;
+    $('#outputPreviousChunk').disabled = true;
+    $('#outputNextChunk').disabled = true;
+
+    try {
+      const bytes = new Uint8Array(await blob.slice(start, end).arrayBuffer());
+      if (sequence !== state.outputPreviewSequence || blob !== state.outputBlob) return;
+      const encoded = window.PolyglotEngine.encodeBytes(bytes, format);
+      state.outputPreviewText = encoded;
+      preview.textContent = encoded;
+      preview.setAttribute('aria-label', `${format === 'hex' ? 'Hexadecimal' : 'Base64'} output byte preview`);
+      $('#outputChunkLabel').textContent = blob.size
+        ? `Page ${page + 1} of ${pageCount} · bytes ${start.toLocaleString()}–${(end - 1).toLocaleString()} of ${blob.size.toLocaleString()}`
+        : 'Empty output · page 1 of 1';
+      $('#outputPreviousChunk').disabled = page === 0;
+      $('#outputNextChunk').disabled = page >= pageCount - 1;
+      $('#copyOutputChunk').disabled = false;
+      $('#copyOutputAll').disabled = blob.size > MAX_OUTPUT_COPY_BYTES;
+      $('#copyOutputAll').title = blob.size > MAX_OUTPUT_COPY_BYTES
+        ? `Whole-output copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)}; copy chunks instead.`
+        : 'Copy the complete representation for this small output.';
+      const encodedCharacters = format === 'hex' ? blob.size * 2 : Math.ceil(blob.size / 3) * 4;
+      $('#outputEncodedSize').textContent = `Full ${format === 'hex' ? 'hexadecimal' : 'Base64'} representation: ${encodedCharacters.toLocaleString()} characters`;
+      $('#outputViewHint').textContent = format === 'hex'
+        ? 'Hex uses 2 characters per byte. The preview is paged so large files do not flood the page.'
+        : 'Base64 is about 4/3 the binary size. Page sizes align for easy concatenation; the final page may include padding.';
+      $('#outputCopyLimit').textContent = blob.size > MAX_OUTPUT_COPY_BYTES
+        ? `Whole-file copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)} to avoid huge text allocations. Copy the current page or download the original.`
+        : 'Small output: copy the whole representation or just this page.';
+    } catch (error) {
+      if (sequence !== state.outputPreviewSequence || blob !== state.outputBlob) return;
+      preview.textContent = 'Could not encode this output chunk.';
+      $('#outputChunkLabel').textContent = 'Preview unavailable';
+      $('#outputPreviousChunk').disabled = true;
+      $('#outputNextChunk').disabled = true;
+      $('#copyOutputChunk').disabled = true;
+      $('#copyOutputAll').disabled = true;
+      notify(error.message || 'Could not preview the output bytes.', true);
+    }
+  }
+
+  async function copyEntireOutput() {
+    const blob = state.outputBlob;
+    if (!blob) return;
+    if (blob.size > MAX_OUTPUT_COPY_BYTES) {
+      notify(`Whole-file text copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)}. Copy chunks instead.`, true);
+      return;
+    }
+    try {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (blob !== state.outputBlob) return;
+      const format = $('#outputViewFormat').value === 'hex' ? 'hex' : 'base64';
+      const encoded = window.PolyglotEngine.encodeBytes(bytes, format);
+      await copyText(encoded, `Entire ${format === 'hex' ? 'hex' : 'Base64'} output`);
+    } catch (error) {
+      notify(error.message || 'Could not encode the complete output.', true);
+    }
   }
 
   function clearUnpackedResult() {
@@ -471,6 +575,8 @@
       });
       if (state.createUrl) URL.revokeObjectURL(state.createUrl);
       const blob = new Blob([result.bytes], { type: 'application/octet-stream' });
+      state.outputBlob = blob;
+      state.outputPreviewPage = 0;
       state.createUrl = URL.createObjectURL(blob);
       const finalName = outputFilename($('#outputFilename').value, result.fileName);
       state.createResult = {
@@ -479,7 +585,8 @@
       };
       const output = $('#createResult');
       output.hidden = false;
-      output.innerHTML = `<div class="result-summary"><span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(result.totalBytes)} · ${escapeHtml(result.host.toUpperCase())} host</small></span></div>${renderRenameNotice(result.renamedFiles)}<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div><div class="result-actions"><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(finalName)}">Download ${escapeHtml(finalName)} <span aria-hidden="true">↓</span></a><button class="report-download" type="button" data-create-report>Save report</button></div>`;
+      output.innerHTML = `<div class="result-summary"><span class="success-check" aria-hidden="true">✓</span><span class="result-copy"><strong>Polyglot built in this browser</strong><small>${result.files.length} payload${result.files.length === 1 ? '' : 's'} · ${prettyBytes(blob.size)} output · ${escapeHtml(result.host.toUpperCase())} host</small></span></div>${renderRenameNotice(result.renamedFiles)}<div class="bundle-digest"><span>ZIP integrity SHA-256</span><code>${escapeHtml(result.bundleSha256)}</code><button class="copy-digest" type="button" data-copy-value="${escapeHtml(result.bundleSha256)}">Copy</button></div><div class="result-actions"><a class="download-link" href="${escapeHtml(state.createUrl)}" download="${escapeHtml(finalName)}">Download ${escapeHtml(finalName)} <span aria-hidden="true">↓</span></a><button class="report-download" type="button" data-create-report>Save report</button></div>${renderOutputInspector()}`;
+      void updateOutputPreview();
       output.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
       notify('Container created. Your files stayed on this device.');
     } catch (error) {
@@ -807,11 +914,29 @@
       updateOperationButtons();
     });
     $('#createButton').addEventListener('click', buildContainer);
+    $('#createResult').addEventListener('change', (event) => {
+      if (event.target.id === 'outputViewFormat' || event.target.id === 'outputChunkSize') {
+        state.outputPreviewPage = 0;
+        void updateOutputPreview();
+      }
+    });
     $('#createResult').addEventListener('click', (event) => {
       const copyButton = event.target.closest('[data-copy-value]');
       if (copyButton) copyText(copyButton.dataset.copyValue, 'Bundle SHA-256');
       if (event.target.closest('[data-create-report]') && state.createResult) {
         downloadVerificationReport(state.createResult.files, state.createResult.metadata);
+      }
+      if (event.target.closest('#outputPreviousChunk')) {
+        state.outputPreviewPage = Math.max(0, state.outputPreviewPage - 1);
+        void updateOutputPreview();
+      } else if (event.target.closest('#outputNextChunk')) {
+        state.outputPreviewPage += 1;
+        void updateOutputPreview();
+      } else if (event.target.closest('#copyOutputChunk') && state.outputPreviewText) {
+        const format = $('#outputViewFormat').value === 'hex' ? 'hex' : 'Base64';
+        copyText(state.outputPreviewText, `${format} output page`);
+      } else if (event.target.closest('#copyOutputAll')) {
+        void copyEntireOutput();
       }
     });
     $('#unpackButton').addEventListener('click', unpackContainer);

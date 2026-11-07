@@ -1,7 +1,7 @@
 /* Same-origin static assets only; user files and Blob downloads are never cached. */
 'use strict';
 
-const CACHE_NAME = 'polyglotmaker-web-only-v1';
+const CACHE_NAME = 'polyglotmaker-web-only-v2';
 const APP_ASSETS = [
   './',
   './index.html',

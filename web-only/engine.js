@@ -783,6 +783,17 @@
     };
   }
 
+  function encodeBytes(data, format = 'base64') {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (format === 'hex') return toHex(bytes);
+    if (format !== 'base64') throw new Error(`Unsupported byte representation: ${format}`);
+    let binary = '';
+    for (let start = 0; start < bytes.length; start += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(start, Math.min(bytes.length, start + 0x8000)));
+    }
+    return btoa(binary);
+  }
+
   async function downloadZip(files, { onProgress, signal } = {}) {
     const seen = new Set();
     const entries = files.map((file) => ({ name: uniqueName(file.name, seen), data: file.data, mtime: Date.now() / 1000, mode: 0o644 }));
@@ -801,6 +812,7 @@
     makePngShell: pngShell,
     createPolyglot,
     unpackPolyglot,
+    encodeBytes,
     downloadZip,
   };
 });

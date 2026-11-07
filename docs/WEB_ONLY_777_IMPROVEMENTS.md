@@ -1,6 +1,6 @@
 # Improvement program
 
-**Target:** 777+ substantive, testable improvements. **Current delivered count: 44 (44/777 minimum).** This is a running count, not a claim that the target is finished. Only shipped behavior is counted; the tracker will not be padded with cosmetic renames or duplicate bullets.
+**Target:** 777+ substantive, testable improvements. **Current delivered count: 52 (52/777 minimum).** This is a running count, not a claim that the target is finished. Only shipped behavior is counted; the tracker will not be padded with cosmetic renames or duplicate bullets.
 
 ## Batch 1 — 19 shipped improvements
 
@@ -52,4 +52,15 @@
 24. The browser lists each filename it adjusts before download so users can see portability-driven changes.
 25. Python CLI build results warn with examples when collision handling changes an input filename.
 
-**Verified so far:** Python and Node round-trips for collision handling; 1,000-member bundle creation/restore; JavaScript syntax; static asset availability; manifest/PNG structure; offline-cache asset list; and the existing Python/Node integration suite. The browser processing path remains local-only.
+## Batch 3 — 8 shipped output-inspection improvements
+
+1. Added compact Base64 as the default text representation of generated output bytes.
+2. Added selectable contiguous hexadecimal output for byte-oriented import workflows.
+3. Display the estimated whole-file character count so Base64/hex expansion is visible before copying.
+4. Read only the selected `Blob.slice()` page for preview instead of encoding the entire output into the page.
+5. Added 12, 48, and 192 KiB page sizes; each is a multiple of three so Base64 pages concatenate cleanly.
+6. Added previous/next paging with the page number and exact source-byte range.
+7. Added a current-page clipboard action for large output files.
+8. Allow whole-output clipboard copies only up to 16 KiB of binary input, while preserving the original binary download for every size.
+
+**Verified so far:** Python and Node round-trips for collision handling; 1,000-member bundle creation/restore; exact hex/Base64 output encodings; Base64 page concatenation at all supported chunk sizes; JavaScript syntax; static asset availability; manifest/PNG structure; offline-cache asset list; and the full Python/Node integration suite. The browser processing path remains local-only.

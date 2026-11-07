@@ -140,6 +140,51 @@ function localNames(bytes) {
         ])
         self.assertEqual(output["zip"], ["Readme.txt", "README (1).TXT"])
 
+    def test_output_inspector_is_paged_and_keeps_the_binary_download(self):
+        app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")
+        for control in (
+            "outputViewFormat",
+            "outputChunkSize",
+            "outputPreviousChunk",
+            "outputNextChunk",
+            "copyOutputChunk",
+            "copyOutputAll",
+        ):
+            self.assertIn(control, app)
+        self.assertIn("<details class=\"output-inspector\" open>", app)
+        self.assertIn("blob.slice(start, end).arrayBuffer()", app)
+        self.assertIn("MAX_OUTPUT_COPY_BYTES", app)
+        self.assertIn("state.outputBlob = blob", app)
+        self.assertIn("download=\"${escapeHtml(finalName)}\"", app)
+        self.assertIn("encodeBytes", (WEB_ONLY_DIR / "engine.js").read_text(encoding="utf-8"))
+
+    def test_output_encodings_are_exact_and_base64_pages_concatenate(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is not installed")
+        script = r"""
+const engine = require('./web-only/engine.js');
+const sample = Uint8Array.from([0, 1, 2, 127, 128, 254, 255]);
+if (engine.encodeBytes(sample, 'hex') !== '0001027f80feff') throw new Error('hex encoding mismatch');
+if (engine.encodeBytes(sample, 'base64') !== 'AAECf4D+/w==') throw new Error('Base64 encoding mismatch');
+const source = Uint8Array.from({ length: 196608 + 19 }, (_, index) => (index * 31) & 255);
+for (const chunkSize of [12288, 49152, 196608]) {
+  if (chunkSize % 3) throw new Error('chunk size is not Base64 aligned');
+  const pages = [];
+  for (let offset = 0; offset < source.length; offset += chunkSize) {
+    pages.push(engine.encodeBytes(source.subarray(offset, Math.min(source.length, offset + chunkSize)), 'base64'));
+  }
+  const joined = pages.join('');
+  if (joined !== engine.encodeBytes(source, 'base64')) throw new Error(`Base64 pages do not join at ${chunkSize}`);
+  if (!Buffer.from(joined, 'base64').equals(Buffer.from(source))) throw new Error(`Base64 round-trip failed at ${chunkSize}`);
+}
+console.log('output encodings verified');
+"""
+        result = subprocess.run(
+            [node, "-e", script], cwd=WEB_ONLY_DIR.parent, check=True, capture_output=True, text=True, timeout=30
+        )
+        self.assertIn("output encodings verified", result.stdout)
+
     def test_installable_offline_app_shell_uses_local_assets_only(self):
         html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
         app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")
