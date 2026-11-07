@@ -23,6 +23,7 @@
     outputPreviewPage: 0,
     outputPreviewText: '',
     outputPreviewSequence: 0,
+    outputCopyBusy: false,
     createController: null,
     unpackController: null,
     zipController: null,
@@ -36,7 +37,7 @@
   const MAX_VISIBLE_UNPACKED = 150;
   const OUTPUT_CHUNK_SIZES = new Set([12 * 1024, 48 * 1024, 192 * 1024]);
   const DEFAULT_OUTPUT_CHUNK_SIZE = 12 * 1024;
-  const MAX_OUTPUT_COPY_BYTES = 16 * 1024;
+  const OUTPUT_COPY_CHUNK_SIZE = 192 * 1024;
   const PREFERENCES_KEY = 'polyglotmaker-web-only-preferences-v1';
   const SORT_OPTIONS = new Set(['name-asc', 'name-desc', 'size-asc', 'size-desc']);
 
@@ -59,6 +60,12 @@
     if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
     if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
     return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+  }
+
+  function outputCopyHint(characterCount) {
+    return characterCount > 16 * 1024 * 1024
+      ? `Copy all is enabled (${prettyBytes(characterCount)} of text); very large clipboard writes may use substantial memory or exceed browser limits. Copy pages if needed.`
+      : 'Copy all output or just this page. Very large clipboard writes may exceed browser/OS limits.';
   }
 
   function totalSourceBytes(files = state.payloads, hostFile = state.hostFile, includeHost = $('#includeHost')?.checked) {
@@ -205,7 +212,7 @@
         </div>
         <div class="output-representation-meta"><span id="outputEncodedSize"></span><span id="outputViewHint"></span></div>
         <pre id="outputPreview" class="output-preview" tabindex="0" aria-label="Encoded output byte preview">Preparing this output chunk…</pre>
-        <div class="output-inspector-actions"><button id="copyOutputChunk" class="report-download" type="button" disabled>Copy this page</button><button id="copyOutputAll" class="report-download" type="button" disabled>Copy whole output</button><span id="outputCopyLimit"></span></div>
+        <div class="output-inspector-actions"><button id="copyOutputChunk" class="report-download" type="button" disabled>Copy this page</button><button id="copyOutputAll" class="report-download" type="button" disabled>Copy all output</button><span id="outputCopyLimit" aria-live="polite"></span></div>
       </div>
     </details>`;
   }
@@ -241,6 +248,7 @@
     state.outputBlob = null;
     state.outputPreviewPage = 0;
     state.outputPreviewText = '';
+    state.outputCopyBusy = false;
     const output = $('#createResult');
     output.hidden = true;
     output.replaceChildren();
@@ -282,18 +290,14 @@
       $('#outputPreviousChunk').disabled = page === 0;
       $('#outputNextChunk').disabled = page >= pageCount - 1;
       $('#copyOutputChunk').disabled = false;
-      $('#copyOutputAll').disabled = blob.size > MAX_OUTPUT_COPY_BYTES;
-      $('#copyOutputAll').title = blob.size > MAX_OUTPUT_COPY_BYTES
-        ? `Whole-output copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)}; copy chunks instead.`
-        : 'Copy the complete representation for this small output.';
+      $('#copyOutputAll').disabled = state.outputCopyBusy;
       const encodedCharacters = format === 'hex' ? blob.size * 2 : Math.ceil(blob.size / 3) * 4;
+      $('#copyOutputAll').title = `Copy the full ${format === 'hex' ? 'hexadecimal' : 'Base64'} representation (${encodedCharacters.toLocaleString()} characters).`;
       $('#outputEncodedSize').textContent = `Full ${format === 'hex' ? 'hexadecimal' : 'Base64'} representation: ${encodedCharacters.toLocaleString()} characters`;
       $('#outputViewHint').textContent = format === 'hex'
         ? 'Hex uses 2 characters per byte. The preview is paged so large files do not flood the page.'
         : 'Base64 is about 4/3 the binary size. Page sizes align for easy concatenation; the final page may include padding.';
-      $('#outputCopyLimit').textContent = blob.size > MAX_OUTPUT_COPY_BYTES
-        ? `Whole-file copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)} to avoid huge text allocations. Copy the current page or download the original.`
-        : 'Small output: copy the whole representation or just this page.';
+      $('#outputCopyLimit').textContent = outputCopyHint(encodedCharacters);
     } catch (error) {
       if (sequence !== state.outputPreviewSequence || blob !== state.outputBlob) return;
       preview.textContent = 'Could not encode this output chunk.';
@@ -306,21 +310,94 @@
     }
   }
 
+  async function createOutputTextBlob(blob, format, onProgress, isCurrent) {
+    const parts = [];
+    for (let start = 0; start < blob.size; start += OUTPUT_COPY_CHUNK_SIZE) {
+      const end = Math.min(blob.size, start + OUTPUT_COPY_CHUNK_SIZE);
+      const bytes = new Uint8Array(await blob.slice(start, end).arrayBuffer());
+      if (!isCurrent()) throw new Error('The output changed before its clipboard copy finished.');
+      parts.push(window.PolyglotEngine.encodeBytes(bytes, format));
+      onProgress?.(Math.round(end / blob.size * 100));
+    }
+    if (!blob.size) onProgress?.(100);
+    const encodedBlob = new Blob(parts, { type: 'text/plain' });
+    parts.length = 0;
+    return encodedBlob;
+  }
+
   async function copyEntireOutput() {
     const blob = state.outputBlob;
-    if (!blob) return;
-    if (blob.size > MAX_OUTPUT_COPY_BYTES) {
-      notify(`Whole-file text copy is limited to ${prettyBytes(MAX_OUTPUT_COPY_BYTES)}. Copy chunks instead.`, true);
-      return;
-    }
+    const button = $('#copyOutputAll');
+    if (!blob || !button || state.outputCopyBusy) return;
+    const format = $('#outputViewFormat').value === 'hex' ? 'hex' : 'base64';
+    const formatLabel = format === 'hex' ? 'hexadecimal' : 'Base64';
+    const label = `Entire ${formatLabel} output`;
+    const originalLabel = button.textContent;
+    const formatControl = $('#outputViewFormat');
+    const chunkControl = $('#outputChunkSize');
+    const copyChunkButton = $('#copyOutputChunk');
+    const previousButton = $('#outputPreviousChunk');
+    const nextButton = $('#outputNextChunk');
+    const progress = $('#outputCopyLimit');
+    let lastProgress = -1;
+    state.outputCopyBusy = true;
+    button.disabled = true;
+    formatControl.disabled = true;
+    chunkControl.disabled = true;
+    copyChunkButton.disabled = true;
+    previousButton.disabled = true;
+    nextButton.disabled = true;
+    button.textContent = 'Preparing full output…';
+    progress.textContent = 'Preparing the complete output text for clipboard…';
+    const reportProgress = (percent) => {
+      if (blob !== state.outputBlob || percent === lastProgress || (percent !== 100 && percent % 10 !== 0)) return;
+      lastProgress = percent;
+      button.textContent = `Preparing ${percent}%…`;
+      progress.textContent = `Encoding the full ${formatLabel} output: ${percent}%`;
+    };
+
     try {
-      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const encodedBlobPromise = createOutputTextBlob(
+        blob,
+        format,
+        reportProgress,
+        () => blob === state.outputBlob,
+      );
+      if (navigator.clipboard?.write && typeof window.ClipboardItem === 'function') {
+        try {
+          const clipboardItem = new window.ClipboardItem({ 'text/plain': encodedBlobPromise });
+          await navigator.clipboard.write([clipboardItem]);
+          if (blob !== state.outputBlob) return;
+          notify(`${label} copied to clipboard.`);
+          return;
+        } catch {
+          if (blob !== state.outputBlob) return;
+          const encodedBlob = await encodedBlobPromise;
+          const encodedText = await encodedBlob.text();
+          if (blob !== state.outputBlob) return;
+          await copyText(encodedText, label);
+          return;
+        }
+      }
+      const encodedBlob = await encodedBlobPromise;
       if (blob !== state.outputBlob) return;
-      const format = $('#outputViewFormat').value === 'hex' ? 'hex' : 'base64';
-      const encoded = window.PolyglotEngine.encodeBytes(bytes, format);
-      await copyText(encoded, `Entire ${format === 'hex' ? 'hex' : 'Base64'} output`);
+      const encodedText = await encodedBlob.text();
+      if (blob !== state.outputBlob) return;
+      await copyText(encodedText, label);
     } catch (error) {
-      notify(error.message || 'Could not encode the complete output.', true);
+      if (blob === state.outputBlob) notify(error.message || 'Could not copy the complete output.', true);
+    } finally {
+      if (blob === state.outputBlob) {
+        state.outputCopyBusy = false;
+        button.disabled = false;
+        button.textContent = originalLabel;
+        formatControl.disabled = false;
+        chunkControl.disabled = false;
+        const currentFormat = $('#outputViewFormat').value === 'hex' ? 'hex' : 'base64';
+        const characters = currentFormat === 'hex' ? blob.size * 2 : Math.ceil(blob.size / 3) * 4;
+        progress.textContent = outputCopyHint(characters);
+        void updateOutputPreview();
+      }
     }
   }
 

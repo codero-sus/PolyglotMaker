@@ -61,6 +61,6 @@
 5. Added 12, 48, and 192 KiB page sizes; each is a multiple of three so Base64 pages concatenate cleanly.
 6. Added previous/next paging with the page number and exact source-byte range.
 7. Added a current-page clipboard action for large output files.
-8. Allow whole-output clipboard copies only up to 16 KiB of binary input, while preserving the original binary download for every size.
+8. Added whole-output clipboard copying for any output size using 192 KiB encoding slices and a Blob-backed clipboard write where supported, while preserving the original binary download.
 
 **Verified so far:** Python and Node round-trips for collision handling; 1,000-member bundle creation/restore; exact hex/Base64 output encodings; Base64 page concatenation at all supported chunk sizes; JavaScript syntax; static asset availability; manifest/PNG structure; offline-cache asset list; and the full Python/Node integration suite. The browser processing path remains local-only.
