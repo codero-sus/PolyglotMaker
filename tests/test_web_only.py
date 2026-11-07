@@ -163,6 +163,13 @@ function localNames(bytes) {
         self.assertIn("download=\"${escapeHtml(finalName)}\"", app)
         self.assertIn("encodeBytes", (WEB_ONLY_DIR / "engine.js").read_text(encoding="utf-8"))
 
+    def test_pages_deployment_publishes_only_the_web_only_app_from_session_branch(self):
+        workflow = (WEB_ONLY_DIR.parent / ".github" / "workflows" / "deploy-pages.yml").read_text(encoding="utf-8")
+        self.assertIn("arena/a02bfaaf-polyglotmaker", workflow)
+        self.assertIn("path: web-only", workflow)
+        self.assertIn("actions/upload-pages-artifact", workflow)
+        self.assertIn("actions/deploy-pages", workflow)
+
     def test_output_encodings_are_exact_and_base64_pages_concatenate(self):
         node = shutil.which("node")
         if not node:
