@@ -50,6 +50,14 @@ class BrowserOnlyEditionTests(unittest.TestCase):
         self.assertIn("codero-sus", credits)
         self.assertIn("the-codero.web.app", credits)
 
+    def test_privacy_banner_has_no_offline_ready_tag(self):
+        html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
+        css = (WEB_ONLY_DIR / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("Private by design", html)
+        self.assertNotIn("OFFLINE-READY", html)
+        self.assertNotIn("privacy-chip", html)
+        self.assertNotIn(".privacy-chip", css)
+
     def test_folder_import_progress_and_selective_zip_controls_exist(self):
         html = (WEB_ONLY_DIR / "index.html").read_text(encoding="utf-8")
         app = (WEB_ONLY_DIR / "app.js").read_text(encoding="utf-8")

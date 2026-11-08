@@ -83,7 +83,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, label:focus-within {
 .privacy-copy { display: grid; gap: 2px; min-width: 0; }
 .privacy-copy strong { color: #31553f; font-size: 11px; font-weight: 760; }
 .privacy-copy small { color: var(--muted); font-size: 10px; }
-.privacy-chip { margin-left: auto; padding: 5px 7px; color: #5a8669; font-size: 8px; font-weight: 850; letter-spacing: .75px; white-space: nowrap; background: rgba(255,255,255,.78); border: 1px solid #d7e9db; border-radius: 6px; }
 .workbench { overflow: hidden; background: rgba(255,255,255,.56); border: 1px solid rgba(211,227,216,.9); border-radius: 17px; box-shadow: 0 20px 56px rgba(35,66,47,.065), 0 3px 9px rgba(35,66,47,.03); animation: rise-in .68s .13s cubic-bezier(.2,.8,.2,1) both; }
 .mode-tabs { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; padding: 11px; background: rgba(249,252,249,.75); border-bottom: 1px solid var(--line); }
 .mode-tab { position: relative; display: flex; min-height: 58px; align-items: center; gap: 11px; padding: 9px 13px; color: #6d8074; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 10px; transition: color .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
@@ -402,7 +401,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, label:focus-within {
   .privacy-icon { width: 30px; height: 30px; flex-basis: 30px; }
   .privacy-copy strong { font-size: 9px; }
   .privacy-copy small { font-size: 8px; line-height: 1.45; }
-  .privacy-chip { display: none; }
   .workbench { border-radius: 13px; }
   .mode-tabs { gap: 5px; padding: 7px; }
   .mode-tab { min-height: 50px; gap: 7px; padding: 6px 8px; }
@@ -508,7 +506,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, label:focus-within {
 :root[data-theme="dark"] .privacy-banner { background: linear-gradient(105deg,#1d3426,#1a2a20); border-color: #34523d; }
 :root[data-theme="dark"] .privacy-icon { background: #294834; border-color: #3a6046; }
 :root[data-theme="dark"] .privacy-copy strong { color: #d9efe0; }
-:root[data-theme="dark"] .privacy-chip, :root[data-theme="dark"] .local-badge { color: #a7d7b6; background: #20382a; border-color: #36553e; }
+:root[data-theme="dark"] .local-badge { color: #a7d7b6; background: #20382a; border-color: #36553e; }
 :root[data-theme="dark"] .hero-pills span, :root[data-theme="dark"] .size-limit { color: #bed0c3; background: rgba(30,47,36,.8); border-color: #3b5141; }
 :root[data-theme="dark"] .panel { background: #1b2b21; border-color: #344a3a; box-shadow: var(--shadow); }
 :root[data-theme="dark"] .panel-title-row h3, :root[data-theme="dark"] .capability-panel h3 { color: #e5f1e8; }
